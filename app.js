@@ -56,7 +56,7 @@ function defaultState() {
     diet: { days: {} },
     grocery: { days: 7, items: [] },
     chat: [],
-    settings: { provider: 'gemini', apiKey: '', model: '', weightUnit: 'kg', gistToken: '', gistId: '', lastCloudBackup: 0, lastExport: 0 },
+    settings: { provider: 'gemini', apiKey: '', model: '', keys: {}, models: {}, fallback: true, weightUnit: 'kg', gistToken: '', gistId: '', lastCloudBackup: 0, lastExport: 0 },
   };
 }
 
@@ -69,6 +69,9 @@ function load() {
   const d = defaultState();
   for (const k of Object.keys(d)) if (S[k] === undefined) S[k] = d[k];
   S.settings = Object.assign({}, d.settings, S.settings);
+  const st0 = S.settings; st0.keys = st0.keys || {}; st0.models = st0.models || {};
+  if (st0.apiKey && !st0.keys[st0.provider]) { st0.keys[st0.provider] = st0.apiKey; if (st0.model) st0.models[st0.provider] = st0.model; }
+  st0.apiKey = ''; st0.model = '';
   S.diet = S.diet || { days: {} }; S.diet.days = S.diet.days || {};
   S.grocery = Object.assign({ days: 7, items: [] }, S.grocery);
 }
@@ -89,7 +92,7 @@ let cloudTimer = null, cloudBusy = false, cloudDirty = false;
 const ghHeaders = () => ({ Authorization: `Bearer ${S.settings.gistToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' });
 function backupPayload() {
   const copy = JSON.parse(JSON.stringify(S));
-  copy.settings.apiKey = ''; copy.settings.gistToken = ''; // never upload secrets
+  copy.settings.apiKey = ''; copy.settings.keys = {}; copy.settings.gistToken = ''; // never upload secrets
   return JSON.stringify(copy);
 }
 function scheduleCloudBackup(delay = 15000) {
@@ -139,7 +142,7 @@ async function cloudRestore() {
     if (!data.exercises || !data.sets) throw new Error('Backup file is not valid');
     const when = new Date(gist.updated_at).toLocaleString();
     if (!confirm(`Restore backup from ${when}? This replaces the data on this phone.`)) return;
-    const keep = { apiKey: st.apiKey, gistToken: st.gistToken };
+    const keep = { keys: st.keys, gistToken: st.gistToken };
     data.settings = Object.assign({}, data.settings, keep, { gistId: gist.id, lastCloudBackup: Date.now() });
     localStorage.setItem(STORE_KEY, JSON.stringify(data)); load(); render(); toast('Restored from GitHub ✓');
   } catch (e) { toast('⚠️ Restore failed: ' + e.message, false, 5000); }
@@ -637,7 +640,7 @@ On the very last line, ALWAYS output exactly: YOUTUBE_QUERY: <best YouTube searc
 
 function viewCoach() {
   let h = '';
-  if (!S.settings.apiKey) h += `<div class="notice warn">Add a free AI key in <b>Settings</b> to use the coach (takes ~1 minute).</div>`;
+  if (!hasAI()) h += `<div class="notice warn">Add a free AI key in <b>Settings</b> to use the coach (takes ~1 minute).</div>`;
   if (S.chat.length) h += `<div style="text-align:right;margin-bottom:6px"><button class="btn xs ghost" data-act="clearChat">Clear chat</button></div>`;
   h += `<div class="chat">`;
   if (!S.chat.length) {
@@ -662,7 +665,7 @@ function chatMsgHtml(m) {
 }
 async function sendChat(text) {
   text = (text || '').trim(); if (!text || UI.aiBusy) return;
-  if (!S.settings.apiKey) { toast('Add your AI key in Settings first'); UI.tab = 'settings'; render(); return; }
+  if (!hasAI()) { toast('Add your AI key in Settings first'); UI.tab = 'settings'; render(); return; }
   S.chat.push({ role: 'user', content: text }); save();
   UI.aiBusy = true; render();
   try {
@@ -764,7 +767,7 @@ function updateMealTotalsInSheet(m) {
 }
 
 async function aiMacros(products, target = null) {
-  if (!S.settings.apiKey) { toast('Add your AI key in Settings first'); return; }
+  if (!hasAI()) { toast('Add your AI key in Settings first'); return; }
   const items = [];
   products.forEach(p => { if (p.name.trim()) items.push({ ref: p, desc: `${p.name} — ${p.qty || '?'} ${p.unit}` }); });
   if (!items.length) { toast('Type the product name first'); return; }
@@ -833,21 +836,29 @@ function groceryItemSheet(id) {
 
 /* ============================== SETTINGS ============================== */
 const PROVIDERS = {
-  gemini: { label: 'Google Gemini (free tier)', defModel: 'gemini-flash-latest', keyUrl: 'https://aistudio.google.com/apikey' },
-  anthropic: { label: 'Anthropic Claude (paid API)', defModel: 'claude-haiku-5-5', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  gemini: { label: 'Google Gemini', note: 'free', defModel: 'gemini-flash-latest', keyUrl: 'https://aistudio.google.com/apikey' },
+  groq: { label: 'Groq', note: 'free, very fast', defModel: 'openai/gpt-oss-120b', keyUrl: 'https://console.groq.com/keys' },
+  openrouter: { label: 'OpenRouter', note: 'free models incl. DeepSeek, 50/day', defModel: 'openrouter/free', keyUrl: 'https://openrouter.ai/settings/keys' },
+  anthropic: { label: 'Anthropic Claude', note: 'paid', defModel: 'claude-haiku-5-5', keyUrl: 'https://console.anthropic.com/settings/keys' },
 };
+const hasAI = () => Object.values(S.settings.keys || {}).some(k => k && k.trim());
 function viewSettings() {
-  const st = S.settings; const P = PROVIDERS[st.provider];
+  const st = S.settings;
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   let h = '';
   if (!standalone) h += `<div class="notice"><b>Install on your iPhone:</b> open this page in <b>Safari</b> → tap <b>Share</b> → <b>Add to Home Screen</b>. Always open the app from the Home Screen icon so your data stays safe.</div>`;
   h += `<div class="card"><h3>Units</h3><div class="seg" style="margin:0">${['kg', 'lb'].map(u => `<button class="${st.weightUnit === u ? 'on' : ''}" data-act="setUnit" data-id="${u}">${u}</button>`).join('')}</div></div>`;
   h += `<div class="card"><h3>AI (coach, macros, workout review)</h3>
-    <label class="field"><span>Provider</span><select data-in="setProvider">${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}" ${k === st.provider ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
-    <label class="field"><span>API key</span><input type="password" autocomplete="off" value="${esc(st.apiKey)}" placeholder="Paste your key" data-in="setKey"></label>
-    <label class="field"><span>Model (optional)</span><input type="text" value="${esc(st.model)}" placeholder="${P.defModel}" data-in="setModel"></label>
-    <p class="small muted" style="margin-top:0">Get a key: <a href="${P.keyUrl}" target="_blank" rel="noopener" style="color:var(--blue)">${P.keyUrl.replace('https://', '')}</a>. The key is stored only on this phone.</p>
-    <button class="btn sm" data-act="testAi" ${UI.aiBusy ? 'disabled' : ''}>${UI.aiBusy ? 'Testing…' : 'Test connection'}</button></div>`;
+    <label class="field"><span>Main AI</span><select data-in="setProvider">${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}" ${k === st.provider ? 'selected' : ''}>${v.label} (${v.note})</option>`).join('')}</select></label>
+    <label class="row" style="margin-bottom:12px"><input type="checkbox" ${st.fallback ? 'checked' : ''} data-in="setFallback"> <span class="small">If it's busy or fails, automatically use another AI that has a key</span></label>
+    <p class="small muted" style="margin-top:0">Add a key for each AI you want to use. Keys are stored only on this phone and never backed up.</p>
+    ${Object.entries(PROVIDERS).map(([k, v]) => `<div class="product-edit">
+      <div class="spread"><b>${v.label} <span class="tiny muted">${v.note}</span></b>${k === st.provider ? '<span class="tag" style="background:var(--accent);color:#fff">main</span>' : ''}</div>
+      <input type="password" autocomplete="off" style="margin-top:6px" value="${esc(st.keys[k] || '')}" placeholder="API key" data-in="setKey" data-id="${k}">
+      <input type="text" style="margin-top:6px" value="${esc(st.models[k] || '')}" placeholder="Model: ${v.defModel}" data-in="setModel" data-id="${k}">
+      <div class="spread" style="margin-top:6px"><a class="small" href="${v.keyUrl}" target="_blank" rel="noopener" style="color:var(--blue)">Get a key ↗</a>
+      <button class="btn xs ghost" data-act="testAi" data-id="${k}" ${UI.aiBusy || !(st.keys[k] || '').trim() ? 'disabled' : ''}>${UI.aiBusy && UI.aiTarget === k ? 'Testing…' : 'Test'}</button></div></div>`).join('')}
+    </div>`;
   h += `<div class="card"><h3>☁️ Automatic backup</h3>
     <p class="small muted" style="margin-top:0">Backs up all your data to a private Gist on your GitHub account a few seconds after every change. Your AI key and token are never uploaded.</p>
     <p class="small" id="cloudStatus">${cloudStatusHtml()}</p>
@@ -869,36 +880,70 @@ async function updatePersistInfo() {
 }
 
 /* ============================== AI ============================== */
-async function aiCall({ system, messages, json = false }) {
-  const st = S.settings; const model = (st.model || PROVIDERS[st.provider].defModel).trim();
-  if (!st.apiKey) throw new Error('No API key set (Settings).');
-  if (!navigator.onLine) throw new Error('You are offline.');
+class AIError extends Error { constructor(msg, retryable) { super(msg); this.retryable = retryable; } }
+async function callProvider(prov, { system, messages, json }) {
+  const st = S.settings; const key = (st.keys[prov] || '').trim();
+  const model = (st.models[prov] || PROVIDERS[prov].defModel).trim();
+  const name = PROVIDERS[prov].label;
   let res, data;
-  if (st.provider === 'gemini') {
-    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': st.apiKey.trim() },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
-        generationConfig: json ? { responseMimeType: 'application/json', temperature: 0.2 } : { temperature: 0.6 },
-      }),
-    });
-    data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error?.message || `Gemini error ${res.status}`);
-    const txt = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
-    if (!txt) throw new Error('Empty reply from Gemini.');
-    return txt;
-  } else {
-    res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': st.apiKey.trim(), 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model, max_tokens: 2500, system, messages: messages.map(m => ({ role: m.role, content: m.content })) }),
-    });
-    data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error?.message || `Claude error ${res.status}`);
-    return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  try {
+    if (prov === 'gemini') {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+          generationConfig: json ? { responseMimeType: 'application/json', temperature: 0.2 } : { temperature: 0.6 },
+        }),
+      });
+    } else if (prov === 'anthropic') {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model, max_tokens: 2500, system, messages: messages.map(m => ({ role: m.role, content: m.content })) }),
+      });
+    } else { // OpenAI-compatible: Groq, OpenRouter
+      const url = prov === 'groq' ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://openrouter.ai/api/v1/chat/completions';
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
+      if (prov === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Lift'; }
+      res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model, temperature: json ? 0.2 : 0.6, messages: [{ role: 'system', content: system }, ...messages.map(m => ({ role: m.role, content: m.content }))] }) });
+    }
+  } catch (e) { throw new AIError(`${name}: network error`, true); }
+  data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data.error?.message || data.error?.error?.message || `error ${res.status}`;
+    throw new AIError(`${name}: ${msg}`, res.status === 429 || res.status >= 500 || /overload|unavailable|capacity|busy/i.test(msg));
   }
+  let txt = '';
+  if (prov === 'gemini') txt = (data.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+  else if (prov === 'anthropic') txt = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  else txt = data.choices?.[0]?.message?.content || '';
+  txt = txt.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  if (!txt) throw new AIError(`${name}: empty reply`, true);
+  return txt;
+}
+async function aiCall(opts, only = null) {
+  if (!navigator.onLine) throw new Error('You are offline.');
+  const st = S.settings; const has = (p) => (st.keys[p] || '').trim();
+  let order = only ? [only] : [st.provider, ...Object.keys(PROVIDERS).filter(p => p !== st.provider)];
+  order = order.filter(has);
+  if (!only && !st.fallback) order = order.slice(0, 1);
+  if (!order.length) throw new Error(has(st.provider) || only ? 'No API key set (Settings).' : `No key for ${PROVIDERS[st.provider].label} — add one in Settings.`);
+  const errors = [];
+  for (let i = 0; i < order.length; i++) {
+    const prov = order[i];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const txt = await callProvider(prov, opts);
+        if (prov !== st.provider && !only) toast(`${PROVIDERS[st.provider].label} was busy — answered by ${PROVIDERS[prov].label}`, false, 3500);
+        return txt;
+      } catch (e) {
+        // Retry the same AI once after a short pause if it was only busy, but don't wait if a backup exists.
+        if (e.retryable && attempt === 0 && i === order.length - 1) { await new Promise(r => setTimeout(r, 1500)); continue; }
+        errors.push(e.message); break;
+      }
+    }
+  }
+  throw new Error(errors.join(' · '));
 }
 function parseJson(txt) {
   const t = txt.replace(/```json|```/g, '');
@@ -971,7 +1016,7 @@ const A = {
   },
   async aiReview(el) {
     const w = S.workouts.find(x => x.id === el.dataset.id); if (!w) return;
-    if (!S.settings.apiKey) { toast('Add your AI key in Settings first'); return; }
+    if (!hasAI()) { toast('Add your AI key in Settings first'); return; }
     const s = computeSummary(w);
     const sets = S.sets.filter(x => x.workoutId === w.id).map(x => `${exById(x.exerciseId)?.name}: ${x.weight}${wu()} x ${x.reps}${x.notes ? ` (${x.notes})` : ''}`);
     const prevSets = s.prev ? S.sets.filter(x => x.workoutId === s.prev.id).map(x => `${exById(x.exerciseId)?.name}: ${x.weight}${wu()} x ${x.reps}`) : [];
@@ -1096,11 +1141,11 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
   // Settings
   goSettings() { UI.tab = 'settings'; window.scrollTo(0, 0); render(); },
   setUnit(el) { S.settings.weightUnit = el.dataset.id; save(); render(); },
-  async testAi() {
-    UI.aiBusy = true; render();
-    try { const r = await aiCall({ system: 'Reply with one short sentence.', messages: [{ role: 'user', content: 'Say hello to a lifter.' }] }); toast('✓ ' + r.slice(0, 90), false, 4000); }
+  async testAi(el) {
+    const prov = el.dataset.id; UI.aiBusy = true; UI.aiTarget = prov; render();
+    try { const r = await aiCall({ system: 'Reply with one short sentence.', messages: [{ role: 'user', content: 'Say hello to a lifter.' }] }, prov); toast(`✓ ${PROVIDERS[prov].label} works: ${r.slice(0, 70)}`, false, 4000); }
     catch (e) { toast('⚠️ ' + e.message, false, 6000); }
-    UI.aiBusy = false; render();
+    UI.aiBusy = false; UI.aiTarget = null; render();
   },
   async cloudNow() { if (!S.settings.gistToken) { toast('Paste your GitHub token first'); return; } toast('Backing up…'); await cloudBackup(true); },
   cloudRestore() { cloudRestore(); },
@@ -1154,14 +1199,15 @@ const I = {
     const it = S.grocery.items.find(i => i.id === el.dataset.id); const k = el.dataset.f;
     it[k] = k === 'scale' ? el.checked : k === 'qty' ? num(el.value) : el.value; save();
   },
-  setProvider(el) { S.settings.provider = el.value; S.settings.model = ''; save(); render(); },
-  setKey(el) { S.settings.apiKey = el.value.trim(); save(); },
+  setProvider(el) { S.settings.provider = el.value; save(); render(); },
+  setFallback(el) { S.settings.fallback = el.checked; save(); },
+  setKey(el) { S.settings.keys[el.dataset.id] = el.value.trim(); save(); },
   setGist(el) {
     const v = el.value.trim(); if (v === S.settings.gistToken) return;
     S.settings.gistToken = v; S.settings.gistId = ''; save();
     if (v) { clearTimeout(cloudTimer); cloudBackup(true).then(() => { const x = $('#cloudStatus'); if (x) x.innerHTML = cloudStatusHtml(); }); }
   },
-  setModel(el) { S.settings.model = el.value.trim(); save(); },
+  setModel(el) { S.settings.models[el.dataset.id] = el.value.trim(); save(); },
   importData(el) {
     const file = el.files[0]; if (!file) return;
     const rd = new FileReader();
@@ -1170,6 +1216,7 @@ const I = {
         const data = JSON.parse(rd.result);
         if (!data.exercises || !data.sets) throw new Error('Not a Lift backup');
         if (!confirm('Replace all current data with this backup?')) return;
+        data.settings = Object.assign({}, data.settings, { keys: S.settings.keys, gistToken: S.settings.gistToken });
         localStorage.setItem(STORE_KEY, JSON.stringify(data)); load(); render(); toast('Backup restored ✓');
       } catch (e) { toast('⚠️ Import failed: ' + e.message); }
     };
@@ -1190,6 +1237,7 @@ document.addEventListener('change', (e) => {
   const n = el.dataset.in;
   if (el.type === 'checkbox' || el.tagName === 'SELECT' || el.type === 'file' || el.type === 'date' || el.type === 'range') { I[n] && I[n](el); return; }
   if (n === 'setGist') { I.setGist(el); return; }
+  if (n === 'setKey') { render(); return; }
   // Re-render sheet after edits that affect PR badges etc.
   if (['setWeight', 'setReps'].includes(n)) render();
 });
