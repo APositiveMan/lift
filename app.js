@@ -262,11 +262,12 @@ function viewTrain() {
   if (!w) {
     h += `<button class="btn primary block" data-act="startWorkout" style="padding:15px;font-size:17px">▶ Start workout</button>`;
   } else {
-    // Exercises for today's categories
-    const exs = S.exercises.filter(e => e.categoryIds.some(c => w.categoryIds.includes(c)));
-    h += `<div class="section-title"><h2>Today's exercises</h2></div>`;
-    if (!exs.length) h += `<div class="card muted small">No exercises in these groups yet. Add some below.</div>`;
+    // Only the exercises you add yourself during this workout
+    const exs = workoutExIds(w).map(exById).filter(Boolean);
+    h += `<div class="section-title"><h2>This workout</h2></div>`;
+    if (!exs.length) h += `<div class="empty" style="padding:14px"><div class="big">➕</div>Add the first exercise you're doing.</div>`;
     for (const e of exs) h += workoutExerciseCard(e, w);
+    h += `<button class="btn primary block" data-act="addWorkoutEx" style="margin-bottom:6px">+ Add exercise</button>`;
   }
 
   // Categories
@@ -309,12 +310,17 @@ function exerciseListHtml() {
   }).join('');
 }
 
+function workoutExIds(w) {
+  if (!w.exerciseIds) w.exerciseIds = [...new Set(S.sets.filter(s => s.workoutId === w.id).sort((a, b) => a.t - b.t).map(s => s.exerciseId))];
+  return w.exerciseIds;
+}
 function workoutExerciseCard(e, w) {
   const today = S.sets.filter(s => s.exerciseId === e.id && s.workoutId === w.id).sort((a, b) => a.t - b.t);
   const last = lastSessionBefore(e.id, w.start);
   const lastTxt = last ? last.sets.map(s => `${fmtN(num(s.weight))}×${s.reps}`).join(', ') : 'first time';
   const prefill = today[today.length - 1] || (last && last.sets[last.sets.length - 1]) || {};
-  let h = `<div class="card"><div class="spread"><h3 style="margin:0" data-act="openExercise" data-id="${e.id}">${esc(e.name)} <span class="chev">›</span></h3></div>
+  let h = `<div class="card"><div class="spread"><h3 style="margin:0" data-act="openExercise" data-id="${e.id}">${esc(e.name)} <span class="chev">›</span></h3>
+    <button class="btn xs ghost" data-act="removeWorkoutEx" data-id="${e.id}">✕ Remove</button></div>
     <div class="tiny muted" style="margin:2px 0 6px">Last time: ${esc(lastTxt)}</div>`;
   today.forEach((s, i) => {
     h += `<div class="set-row"><div class="set-num">${i + 1}</div><div class="set-main"><b>${fmtN(num(s.weight))}</b> ${wu()} × <b>${s.reps}</b>
@@ -338,7 +344,9 @@ function lastSessionBefore(exId, beforeT) {
 function addSet(exId, weight, reps, notes = '', t = Date.now()) {
   const w = activeWorkout();
   const s = { id: uid(), exerciseId: exId, t, weight: num(weight), reps: Math.round(num(reps)), notes, workoutId: w ? w.id : null };
-  S.sets.push(s); save();
+  S.sets.push(s);
+  if (w && !workoutExIds(w).includes(exId)) w.exerciseIds.push(exId);
+  save();
   const f = prFlags(s);
   if (f.length) toast(`New personal best! ${f.map(x => PR_LABEL[x].replace('🏆 ', '')).join(' · ')} 🏆`, true, 3500);
   else toast('Set logged ✓');
@@ -413,6 +421,26 @@ function categorySheet(catId) {
     h += `<button class="btn danger block" style="margin-top:16px" data-act="deleteCategory" data-id="${c.id}">Delete group</button>`;
     return h;
   };
+}
+
+/* ---- Add exercise to the running workout ---- */
+let pickerSearch = '';
+function exercisePickerSheet() {
+  const w = activeWorkout(); if (!w) return sheetHead('Add exercise');
+  const inW = workoutExIds(w); const q = pickerSearch.trim().toLowerCase();
+  const list = S.exercises.filter(e => !inW.includes(e.id) && (!q || e.name.toLowerCase().includes(q)));
+  const inGroup = (e) => e.categoryIds.some(c => w.categoryIds.includes(c));
+  const row = (e) => `<div class="list-item" data-act="pickWorkoutEx" data-id="${e.id}"><div class="li-main"><div class="li-title">${esc(e.name)}</div>
+    <div class="li-sub">${e.categoryIds.map(id => catById(id)?.name).filter(Boolean).map(c => `<span class="tag">${esc(c)}</span>`).join('') || '<span class="tag">No group</span>'}</div></div><span style="color:var(--accent);font-size:22px">+</span></div>`;
+  let h = sheetHead('Add exercise');
+  h += `<input type="text" id="pickSearch" placeholder="Search or type a new exercise…" value="${esc(pickerSearch)}" data-in="pickSearch" style="margin-bottom:10px">`;
+  if (q && !S.exercises.some(e => e.name.toLowerCase() === q))
+    h += `<button class="btn block" data-act="createWorkoutEx" style="margin-bottom:10px">＋ Create “${esc(pickerSearch.trim())}”</button>`;
+  const a = list.filter(inGroup), b = list.filter(e => !inGroup(e));
+  if (a.length) h += `<div class="date-head">${esc(catNames(w.categoryIds))}</div>` + a.map(row).join('');
+  if (b.length) h += `<div class="date-head">Other exercises</div>` + b.map(row).join('');
+  if (!list.length && !q) h += `<p class="muted small">All your exercises are already in this workout. Type a name above to create a new one.</p>`;
+  return h;
 }
 
 /* ---- Workout start / end ---- */
@@ -903,7 +931,7 @@ const A = {
   pickCat(el) { const id = el.dataset.id; pickCats = pickCats.includes(id) ? pickCats.filter(x => x !== id) : [...pickCats, id]; renderSheet(); },
   confirmStart() {
     if (!pickCats.length) return;
-    const w = { id: uid(), start: Date.now(), end: null, categoryIds: [...pickCats], aiReview: null };
+    const w = { id: uid(), start: Date.now(), end: null, categoryIds: [...pickCats], exerciseIds: [], aiReview: null };
     S.workouts.push(w); S.activeWorkoutId = w.id; save(true);
     UI.tab = 'train'; closeSheet(); toast('Workout started 💪');
   },
@@ -912,6 +940,24 @@ const A = {
     if (!confirm('End this workout?')) return;
     w.end = Date.now(); S.activeWorkoutId = null; save(true); render();
     openSheet(summarySheet(w.id));
+  },
+  addWorkoutEx() { pickerSearch = ''; openSheet(exercisePickerSheet); setTimeout(() => $('#pickSearch')?.focus(), 100); },
+  pickWorkoutEx(el) {
+    const w = activeWorkout(); if (!w) return;
+    workoutExIds(w).push(el.dataset.id); save(); closeSheet();
+    toast(`${exById(el.dataset.id).name} added`);
+  },
+  createWorkoutEx() {
+    const w = activeWorkout(); const name = pickerSearch.trim(); if (!w || !name) return;
+    const e = { id: uid(), name, categoryIds: w.categoryIds.slice(0, 1), notes: '' };
+    S.exercises.push(e); workoutExIds(w).push(e.id); save(); closeSheet(); toast(`${name} created & added`);
+  },
+  removeWorkoutEx(el) {
+    const w = activeWorkout(); if (!w) return; const id = el.dataset.id;
+    const n = S.sets.filter(s => s.workoutId === w.id && s.exerciseId === id).length;
+    if (n && !confirm(`Remove ${exById(id)?.name} from this workout and delete its ${n} logged set${n === 1 ? '' : 's'}?`)) return;
+    S.sets = S.sets.filter(s => !(s.workoutId === w.id && s.exerciseId === id));
+    w.exerciseIds = workoutExIds(w).filter(x => x !== id); save(); render();
   },
   showSummary(el) { openSheet(summarySheet(el.dataset.id)); },
   deleteWorkout(el) {
@@ -1068,6 +1114,10 @@ function newProduct(unit = 'g') { return { id: uid(), name: '', qty: '', unit, k
 
 /* ============================== Inputs ============================== */
 const I = {
+  pickSearch(el) {
+    pickerSearch = el.value; const pos = el.selectionStart; renderSheet();
+    const n = $('#pickSearch'); if (n) { n.focus(); n.setSelectionRange(pos, pos); }
+  },
   trainSearch(el) { UI.trainSearch = el.value; $('#exList').innerHTML = exerciseListHtml(); },
   exName(el) { exById(el.dataset.id).name = el.value; save(); },
   exNotes(el) { exById(el.dataset.id).notes = el.value; save(); },
@@ -1121,7 +1171,7 @@ const I = {
   },
 };
 // Text inputs update live; selects/checkboxes/files/range fire on change.
-const LIVE = new Set(['trainSearch', 'exName', 'exNotes', 'catName', 'setWeight', 'setReps', 'setNotes', 'mealName', 'prod', 'gi', 'setKey', 'setModel']);
+const LIVE = new Set(['pickSearch', 'trainSearch', 'exName', 'exNotes', 'catName', 'setWeight', 'setReps', 'setNotes', 'mealName', 'prod', 'gi', 'setKey', 'setModel']);
 document.addEventListener('input', (e) => {
   const el = e.target.closest('[data-in]'); if (!el) return;
   const n = el.dataset.in;
