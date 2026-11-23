@@ -225,7 +225,7 @@ function closeSheet() {
   document.body.style.overflow = '';
   render();
 }
-const sheetHead = (title) => `<div class="sheet-head"><h2>${esc(title)}</h2><button class="btn sm ghost" data-act="closeSheet">Done</button></div>`;
+const sheetHead = (title, done = true) => `<div class="sheet-head"><h2>${esc(title)}</h2>${done ? '<button class="btn sm ghost" data-act="closeSheet">Done</button>' : ''}</div>`;
 $('#sheetBackdrop').addEventListener('click', closeSheet);
 
 /* ============================== Render root ============================== */
@@ -731,23 +731,27 @@ function mealSheet(mealId) {
   return () => {
     const f = findMeal(mealId); if (!f) return sheetHead('Meal') + '<p>Deleted.</p>';
     const m = f.meal; const t = mealTotals(m);
-    let h = sheetHead(MEAL_TYPES[m.type].emoji + ' ' + MEAL_TYPES[m.type].label);
+    let h = sheetHead(MEAL_TYPES[m.type].emoji + ' ' + MEAL_TYPES[m.type].label, false);
     h += `<div class="grid2"><label class="field"><span>Type</span><select data-in="mealType" data-id="${m.id}">${Object.entries(MEAL_TYPES).map(([k, v]) => `<option value="${k}" ${k === m.type ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
       <label class="field"><span>Name</span><input type="text" value="${esc(m.name)}" placeholder="${MEAL_TYPES[m.type].label}" data-in="mealName" data-id="${m.id}"></label></div>
       <label class="row" style="margin-bottom:12px"><input type="checkbox" ${m.eaten ? 'checked' : ''} data-in="mealEaten" data-id="${m.id}"> <span>Eaten</span></label>`;
     h += `<div class="card" style="background:var(--card2)"><div class="macro-bar">${[['kcal', 'kcal'], ['protein', 'Protein g'], ['carbs', 'Carbs g'], ['fat', 'Fat g']].map(([x, l]) => `<div class="m"><div class="v" id="mt_${x}">${Math.round(t[x])}</div><div class="l">${l}</div></div>`).join('')}</div>
       <div class="tiny muted" style="text-align:center;margin-top:6px" id="mt_extra">Fiber ${fmtN(t.fiber)} g · Sugar ${fmtN(t.sugar)} g</div></div>`;
-    h += `<div class="spread" style="margin:14px 0 8px"><h3 style="margin:0">Products</h3><button class="btn sm" data-act="addProduct" data-id="${m.id}">+ Product</button></div>`;
+    const busy = (id) => UI.aiBusy && UI.aiTarget === id;
+    h += `<div class="row" style="margin:14px 0 8px"><h3 style="margin:0">Products</h3>
+      ${m.products.length ? `<button class="btn xs ghost" style="white-space:nowrap" data-act="aiMacrosMeal" data-id="${m.id}" ${UI.aiBusy ? 'disabled' : ''}>${busy(m.id) ? 'Calculating…' : '🤖 Calculate all macros with AI'}</button>` : ''}</div>`;
     if (!m.products.length) h += `<p class="muted small">Add the foods in this meal with exact amounts, then let AI calculate the macros.</p>`;
     m.products.forEach((p) => {
       h += `<div class="product-edit"><div class="row"><input type="text" class="grow" placeholder="Product (e.g. Oats, Greek yogurt 2%)" value="${esc(p.name)}" data-in="prod" data-f="name" data-m="${m.id}" data-id="${p.id}">
         <button class="icon-btn" data-act="delProduct" data-m="${m.id}" data-id="${p.id}">✕</button></div>
         <div class="qty-row"><input type="text" inputmode="decimal" placeholder="Amount" value="${esc(p.qty)}" data-in="prod" data-f="qty" data-m="${m.id}" data-id="${p.id}">
         ${unitSelect(p.unit, `data-in="prod" data-f="unit" data-m="${m.id}" data-id="${p.id}"`)}</div>
-        <div class="macros">${MACROS.map(([k, l]) => `<label><span>${l}</span><input type="text" inputmode="decimal" value="${p[k] === '' || p[k] === undefined ? '' : esc(p[k])}" data-in="prod" data-f="${k}" data-m="${m.id}" data-id="${p.id}"></label>`).join('')}</div></div>`;
+        <div class="tiny muted" style="margin-top:8px">✏️ Macros for this amount — type them in yourself, or use AI below</div>
+        <div class="macros">${MACROS.map(([k, l]) => `<label><span>${l}</span><input type="text" inputmode="decimal" placeholder="0" value="${p[k] === '' || p[k] === undefined ? '' : esc(p[k])}" data-in="prod" data-f="${k}" data-m="${m.id}" data-id="${p.id}"></label>`).join('')}</div>
+        <button class="btn xs ghost" style="margin-top:8px" data-act="aiMacrosProduct" data-m="${m.id}" data-id="${p.id}" ${UI.aiBusy ? 'disabled' : ''}>${busy(p.id) ? 'Calculating…' : '🤖 Calculate with AI'}</button></div>`;
     });
-    if (m.products.length) h += `<button class="btn primary block" data-act="aiMacrosMeal" data-id="${m.id}" ${UI.aiBusy ? 'disabled' : ''}>${UI.aiBusy ? 'Calculating…' : '🤖 Calculate macros with AI'}</button>
-      <p class="tiny muted" style="text-align:center">AI fills in the numbers — you can still edit any of them.</p>`;
+    h += `<button class="btn ghost block" data-act="addProduct" data-id="${m.id}">+ Add product</button>`;
+    h += `<button class="btn primary block" style="margin-top:12px" data-act="saveMeal">Save</button>`;
     h += `<button class="btn danger block" style="margin-top:16px" data-act="deleteMeal" data-id="${m.id}">Delete</button>`;
     return h;
   };
@@ -759,12 +763,12 @@ function updateMealTotalsInSheet(m) {
   const ex = $('#mt_extra'); if (ex) ex.textContent = `Fiber ${fmtN(t.fiber)} g · Sugar ${fmtN(t.sugar)} g`;
 }
 
-async function aiMacros(meals) {
+async function aiMacros(products, target = null) {
   if (!S.settings.apiKey) { toast('Add your AI key in Settings first'); return; }
   const items = [];
-  meals.forEach(m => m.products.forEach(p => { if (p.name.trim()) items.push({ ref: p, desc: `${p.name} — ${p.qty || '?'} ${p.unit}` }); }));
-  if (!items.length) { toast('Add products first'); return; }
-  UI.aiBusy = true; renderSheet(); render();
+  products.forEach(p => { if (p.name.trim()) items.push({ ref: p, desc: `${p.name} — ${p.qty || '?'} ${p.unit}` }); });
+  if (!items.length) { toast('Type the product name first'); return; }
+  UI.aiBusy = true; UI.aiTarget = target; renderSheet(); render();
   try {
     const prompt = `Estimate nutrition for each food item for EXACTLY the stated amount. Use standard nutrition databases (USDA etc.). For supplements/vitamins, kcal and macros are usually 0 unless they contain calories.
 Items:
@@ -780,7 +784,7 @@ Reply with ONLY JSON: {"items":[{"i":0,"kcal":0,"protein":0,"carbs":0,"fat":0,"f
     }
     save(); toast(`Macros calculated for ${n} item${n === 1 ? '' : 's'} ✓`);
   } catch (e) { toast('⚠️ ' + e.message, false, 5000); }
-  UI.aiBusy = false; renderSheet(); render();
+  UI.aiBusy = false; UI.aiTarget = null; renderSheet(); render();
 }
 
 /* ---- Grocery ---- */
@@ -1056,8 +1060,10 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     const f = findMeal(el.dataset.id); if (!f || !confirm('Delete this meal?')) return;
     S.diet.days[f.key].meals = S.diet.days[f.key].meals.filter(m => m.id !== f.meal.id); save(); closeSheet();
   },
-  aiMacrosMeal(el) { const f = findMeal(el.dataset.id); if (f) aiMacros([f.meal]); },
-  aiMacrosDay() { const d = dietDay(UI.dietDate); if (d) aiMacros(d.meals); },
+  aiMacrosMeal(el) { const f = findMeal(el.dataset.id); if (f) aiMacros(f.meal.products, f.meal.id); },
+  aiMacrosProduct(el) { const f = findMeal(el.dataset.m); const p = f?.meal.products.find(x => x.id === el.dataset.id); if (p) aiMacros([p], p.id); },
+  saveMeal() { save(true); closeSheet(); toast('Meal saved ✓'); },
+  aiMacrosDay() { const d = dietDay(UI.dietDate); if (d) aiMacros(d.meals.flatMap(m => m.products), 'day'); },
   // Grocery
   gDays(el) { S.grocery.days = Math.min(31, Math.max(1, S.grocery.days + +el.dataset.id)); save(); render(); },
   gDaysSet(el) { S.grocery.days = +el.dataset.id; save(); render(); },
