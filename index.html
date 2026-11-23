@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f1115">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Lift">
+  <title>Lift</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="screenTitle">Train</h1>
+    <a class="spotify-btn" id="spotifyBtn" href="spotify:" aria-label="Open Spotify">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#1DB954"/><path d="M6.5 9.2c3.8-1.1 8-.8 11.2 1M7.2 12.3c3.2-.9 6.6-.6 9.3.9M7.8 15.2c2.6-.7 5.3-.5 7.4.7" stroke="#000" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+      <span>Spotify</span>
+    </a>
+  </header>
+
+  <div id="workoutBanner" class="workout-banner hidden"></div>
+
+  <main id="view"></main>
+
+  <nav class="tabbar">
+    <button data-tab="train" class="active"><span class="ti">🏋️</span><span>Train</span></button>
+    <button data-tab="progress"><span class="ti">📈</span><span>Progress</span></button>
+    <button data-tab="coach"><span class="ti">🤖</span><span>Coach</span></button>
+    <button data-tab="food"><span class="ti">🥗</span><span>Food</span></button>
+    <button data-tab="settings"><span class="ti">⚙️</span><span>Settings</span></button>
+  </nav>
+
+  <div id="sheetBackdrop" class="sheet-backdrop hidden"></div>
+  <div id="sheet" class="sheet hidden"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
