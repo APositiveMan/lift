@@ -56,7 +56,7 @@ function defaultState() {
     diet: { days: {} },
     grocery: { days: 7, items: [] },
     chat: [],
-    settings: { provider: 'gemini', apiKey: '', model: '', weightUnit: 'kg' },
+    settings: { provider: 'gemini', apiKey: '', model: '', weightUnit: 'kg', gistToken: '', gistId: '', lastCloudBackup: 0, lastExport: 0 },
   };
 }
 
@@ -80,9 +80,83 @@ function save(now = false) {
     catch (e) { toast('⚠️ Could not save — storage full? Export a backup in Settings.'); }
   };
   if (now) doSave(); else saveTimer = setTimeout(doSave, 250);
+  scheduleCloudBackup();
 }
+
+/* ============================== Auto cloud backup (private GitHub Gist) ============================== */
+const GIST_FILE = 'lift-backup.json', GIST_DESC = 'Lift app backup (auto)';
+let cloudTimer = null, cloudBusy = false, cloudDirty = false;
+const ghHeaders = () => ({ Authorization: `Bearer ${S.settings.gistToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' });
+function backupPayload() {
+  const copy = JSON.parse(JSON.stringify(S));
+  copy.settings.apiKey = ''; copy.settings.gistToken = ''; // never upload secrets
+  return JSON.stringify(copy);
+}
+function scheduleCloudBackup(delay = 15000) {
+  if (!S?.settings?.gistToken) return;
+  cloudDirty = true; clearTimeout(cloudTimer); cloudTimer = setTimeout(() => cloudBackup(), delay);
+}
+async function findGist() {
+  const res = await fetch('https://api.github.com/gists?per_page=100', { headers: ghHeaders() });
+  if (!res.ok) throw new Error(res.status === 401 ? 'GitHub token is invalid or expired' : `GitHub error ${res.status}`);
+  const list = await res.json();
+  return list.find(g => g.files && g.files[GIST_FILE]) || null;
+}
+async function cloudBackup(manual = false) {
+  const st = S.settings;
+  if (!st.gistToken || cloudBusy || !navigator.onLine) return false;
+  cloudBusy = true; cloudDirty = false;
+  try {
+    if (!st.gistId) { const g = await findGist(); if (g) st.gistId = g.id; }
+    const body = JSON.stringify({ description: GIST_DESC, files: { [GIST_FILE]: { content: backupPayload() } } });
+    let res = st.gistId
+      ? await fetch(`https://api.github.com/gists/${st.gistId}`, { method: 'PATCH', headers: ghHeaders(), body })
+      : await fetch('https://api.github.com/gists', { method: 'POST', headers: ghHeaders(), body: JSON.stringify({ ...JSON.parse(body), public: false }) });
+    if (res.status === 404 && st.gistId) { st.gistId = ''; cloudBusy = false; return cloudBackup(manual); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(res.status === 401 ? 'GitHub token is invalid or expired' : (data.message || `GitHub error ${res.status}`));
+    st.gistId = data.id; st.lastCloudBackup = Date.now();
+    localStorage.setItem(STORE_KEY, JSON.stringify(S));
+    if (manual) toast('☁️ Backed up to GitHub ✓');
+    const el = $('#cloudStatus'); if (el) el.innerHTML = cloudStatusHtml();
+    return true;
+  } catch (e) {
+    if (manual) toast('⚠️ Backup failed: ' + e.message, false, 5000);
+    cloudDirty = true; return false;
+  } finally { cloudBusy = false; }
+}
+async function cloudRestore() {
+  const st = S.settings;
+  if (!st.gistToken) { toast('Paste your GitHub token first'); return; }
+  try {
+    const g = st.gistId ? { id: st.gistId } : await findGist();
+    if (!g) { toast('No Lift backup found on this GitHub account'); return; }
+    const res = await fetch(`https://api.github.com/gists/${g.id}`, { headers: ghHeaders() });
+    if (!res.ok) throw new Error(`GitHub error ${res.status}`);
+    const gist = await res.json(); const f = gist.files[GIST_FILE];
+    const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+    const data = JSON.parse(text);
+    if (!data.exercises || !data.sets) throw new Error('Backup file is not valid');
+    const when = new Date(gist.updated_at).toLocaleString();
+    if (!confirm(`Restore backup from ${when}? This replaces the data on this phone.`)) return;
+    const keep = { apiKey: st.apiKey, gistToken: st.gistToken };
+    data.settings = Object.assign({}, data.settings, keep, { gistId: gist.id, lastCloudBackup: Date.now() });
+    localStorage.setItem(STORE_KEY, JSON.stringify(data)); load(); render(); toast('Restored from GitHub ✓');
+  } catch (e) { toast('⚠️ Restore failed: ' + e.message, false, 5000); }
+}
+function cloudStatusHtml() {
+  const st = S.settings;
+  if (!st.gistToken) return '<span class="muted">Off — paste a token to turn on automatic backups.</span>';
+  if (!st.lastCloudBackup) return '<span class="muted">On — first backup will happen shortly.</span>';
+  const mins = Math.round((Date.now() - st.lastCloudBackup) / 60000);
+  const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.round(mins / 60)} h ago` : `${Math.round(mins / 1440)} days ago`;
+  return `<span style="color:var(--good)">✓ On</span> <span class="muted">· last backup ${ago}</span>`;
+}
+window.addEventListener('online', () => { if (cloudDirty) scheduleCloudBackup(2000); });
 window.addEventListener('pagehide', () => save(true));
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { save(true); if (cloudDirty) { clearTimeout(cloudTimer); cloudBackup(); } }
+});
 
 /* ============================== UI state ============================== */
 const UI = {
@@ -184,6 +258,8 @@ document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('cli
 function viewTrain() {
   const w = activeWorkout();
   let h = '';
+  if (!S.settings.gistToken && S.sets.length && Date.now() - (S.settings.lastExport || 0) > 7 * 864e5)
+    h += `<div class="notice warn" data-act="goSettings" style="cursor:pointer">☁️ Your progress is only on this phone. <b>Turn on automatic backup</b> in Settings →</div>`;
   if (!w) {
     h += `<button class="btn primary block" data-act="startWorkout" style="padding:15px;font-size:17px">▶ Start workout</button>`;
   } else {
@@ -741,7 +817,13 @@ function viewSettings() {
     <label class="field"><span>Model (optional)</span><input type="text" value="${esc(st.model)}" placeholder="${P.defModel}" data-in="setModel"></label>
     <p class="small muted" style="margin-top:0">Get a key: <a href="${P.keyUrl}" target="_blank" rel="noopener" style="color:var(--blue)">${P.keyUrl.replace('https://', '')}</a>. The key is stored only on this phone.</p>
     <button class="btn sm" data-act="testAi" ${UI.aiBusy ? 'disabled' : ''}>${UI.aiBusy ? 'Testing…' : 'Test connection'}</button></div>`;
-  h += `<div class="card"><h3>Backup</h3><p class="small muted" style="margin-top:0">Your data lives only on this phone. Export a backup now and then (save it to Files/iCloud).</p>
+  h += `<div class="card"><h3>☁️ Automatic backup</h3>
+    <p class="small muted" style="margin-top:0">Backs up all your data to a private Gist on your GitHub account a few seconds after every change. Your AI key and token are never uploaded.</p>
+    <p class="small" id="cloudStatus">${cloudStatusHtml()}</p>
+    <label class="field"><span>GitHub token (gist access)</span><input type="password" autocomplete="off" value="${esc(st.gistToken)}" placeholder="ghp_…" data-in="setGist"></label>
+    <p class="small muted" style="margin-top:0">Create one: <a href="https://github.com/settings/tokens/new?scopes=gist&description=Lift%20backup" target="_blank" rel="noopener" style="color:var(--blue)">github.com/settings/tokens/new</a> → set <b>Expiration: No expiration</b> → <b>Generate token</b> → copy it here.</p>
+    <div class="row wrap"><button class="btn sm primary" data-act="cloudNow">☁️ Back up now</button><button class="btn sm" data-act="cloudRestore">⬇ Restore from GitHub</button></div></div>`;
+  h += `<div class="card"><h3>Manual backup file</h3><p class="small muted" style="margin-top:0">Optional extra copy you can save to Files/iCloud.</p>
     <div class="row wrap"><button class="btn sm" data-act="exportData">⬆ Export backup</button><label class="btn sm" style="cursor:pointer">⬇ Import backup<input type="file" accept=".json,application/json" data-in="importData" hidden></label></div>
     <p class="tiny muted" id="persistInfo" style="margin-bottom:0"></p></div>`;
   h += `<div class="card"><h3>Danger zone</h3><button class="btn danger sm" data-act="resetAll">Erase all data</button></div>`;
@@ -961,6 +1043,7 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     save(); render(); toast(`${added} added, ${updated} updated (per day × ${S.grocery.days} days)`);
   },
   // Settings
+  goSettings() { UI.tab = 'settings'; window.scrollTo(0, 0); render(); },
   setUnit(el) { S.settings.weightUnit = el.dataset.id; save(); render(); },
   async testAi() {
     UI.aiBusy = true; render();
@@ -968,7 +1051,10 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     catch (e) { toast('⚠️ ' + e.message, false, 6000); }
     UI.aiBusy = false; render();
   },
+  async cloudNow() { if (!S.settings.gistToken) { toast('Paste your GitHub token first'); return; } toast('Backing up…'); await cloudBackup(true); },
+  cloudRestore() { cloudRestore(); },
   exportData() {
+    S.settings.lastExport = Date.now(); save();
     const blob = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `lift-backup-${todayKey()}.json`;
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -1015,6 +1101,11 @@ const I = {
   },
   setProvider(el) { S.settings.provider = el.value; S.settings.model = ''; save(); render(); },
   setKey(el) { S.settings.apiKey = el.value.trim(); save(); },
+  setGist(el) {
+    const v = el.value.trim(); if (v === S.settings.gistToken) return;
+    S.settings.gistToken = v; S.settings.gistId = ''; save();
+    if (v) { clearTimeout(cloudTimer); cloudBackup(true).then(() => { const x = $('#cloudStatus'); if (x) x.innerHTML = cloudStatusHtml(); }); }
+  },
   setModel(el) { S.settings.model = el.value.trim(); save(); },
   importData(el) {
     const file = el.files[0]; if (!file) return;
@@ -1043,6 +1134,7 @@ document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-in]'); if (!el) return;
   const n = el.dataset.in;
   if (el.type === 'checkbox' || el.tagName === 'SELECT' || el.type === 'file' || el.type === 'date' || el.type === 'range') { I[n] && I[n](el); return; }
+  if (n === 'setGist') { I.setGist(el); return; }
   // Re-render sheet after edits that affect PR badges etc.
   if (['setWeight', 'setReps'].includes(n)) render();
 });
@@ -1070,6 +1162,7 @@ $('#spotifyBtn').addEventListener('click', (e) => {
 /* ============================== Boot ============================== */
 load();
 render();
+if (S.settings.gistToken && Date.now() - (S.settings.lastCloudBackup || 0) > 6 * 3600e3) scheduleCloudBackup(3000);
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
