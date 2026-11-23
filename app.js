@@ -231,7 +231,6 @@ $('#sheetBackdrop').addEventListener('click', closeSheet);
 /* ============================== Render root ============================== */
 const TITLES = { train: 'Train', progress: 'Progress', coach: 'AI Coach', food: 'Food', settings: 'Settings' };
 function render() {
-  $('#screenTitle').textContent = TITLES[UI.tab];
   document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.tab === UI.tab));
   renderBanner();
   const v = $('#view');
