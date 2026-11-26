@@ -21,6 +21,42 @@ const fmtDayLong = (k) => {
   if (k === dayKey(t)) return 'Tomorrow';
   return keyToDate(k).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 };
+/* ---- Date format (Settings → Date format) ---- */
+const DATE_FORMATS = {
+  'DD/MM/YYYY': { order: 'dmy', sep: '/' }, 'DD.MM.YYYY': { order: 'dmy', sep: '.' },
+  'MM/DD/YYYY': { order: 'mdy', sep: '/' }, 'YYYY-MM-DD': { order: 'ymd', sep: '-' },
+};
+const dfmt = () => DATE_FORMATS[(typeof S !== 'undefined' && S?.settings?.dateFormat) || 'DD/MM/YYYY'] || DATE_FORMATS['DD/MM/YYYY'];
+const dfmtName = () => Object.keys(DATE_FORMATS).find(k => DATE_FORMATS[k] === dfmt());
+// ISO 'YYYY-MM-DD' → '24/11/2026' (or the chosen format). short=true drops the year: '24/11'
+function fmtDate(iso, short = false) {
+  if (!iso) return ''; const [y, m, d] = iso.split('-'); const f = dfmt();
+  const parts = { d, m, y }; const order = short ? f.order.replace('y', '') : f.order;
+  return [...order].map(k => parts[k]).join(f.sep);
+}
+// Typed digits → formatted text with separators, e.g. '24112026' → '24/11/2026'
+function maskDate(raw) {
+  const f = dfmt(); const digits = raw.replace(/\D/g, '').slice(0, 8);
+  const sizes = [...f.order].map(k => (k === 'y' ? 4 : 2)); let out = '', i = 0;
+  sizes.forEach((n, idx) => { const chunk = digits.slice(i, i + n); i += n; if (!chunk) return; out += (idx ? f.sep : '') + chunk; });
+  return out;
+}
+// Formatted text → ISO, or '' if incomplete/invalid
+function parseDate(text) {
+  const f = dfmt(); const digits = (text || '').replace(/\D/g, ''); if (digits.length !== 8) return '';
+  const parts = {}; let i = 0; for (const k of f.order) { const n = k === 'y' ? 4 : 2; parts[k] = digits.slice(i, i + n); i += n; }
+  const y = +parts.y, m = +parts.m, d = +parts.d; if (y < 1900 || m < 1 || m > 12 || d < 1) return '';
+  const dt = new Date(y, m - 1, d); if (dt.getMonth() !== m - 1) return '';
+  return `${parts.y}-${parts.m}-${parts.d}`;
+}
+// A date field in the user's format: text box + calendar button (native picker underneath)
+function dateField({ handler, iso = '', id = '', dataId = '', max = '' }) {
+  return `<div class="dfield"><input type="text" class="dtext" inputmode="numeric" autocomplete="off" ${id ? `id="${id}"` : ''} value="${fmtDate(iso)}" data-iso="${iso}"
+      placeholder="${esc(dfmtName())}" maxlength="10" data-in="dateText" data-h="${handler}" ${dataId ? `data-id="${dataId}"` : ''}>
+    <button type="button" class="dpick" data-act="openPicker" aria-label="Pick a date">📅</button>
+    <input type="date" class="dnative" tabindex="-1" aria-hidden="true" value="${iso}" min="1900-01-01" ${max ? `max="${max}"` : ''} data-in="dateNative"></div>`;
+}
+const dateHint = () => `<div class="tiny muted date-hint" data-act="goDateFormat">Format: ${esc(dfmtName())} · <u>adjust date format in Settings</u></div>`;
 const shiftKey = (k, days) => { const d = keyToDate(k); d.setDate(d.getDate() + days); return dayKey(d); };
 const fmtDur = (ms) => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`; };
 const pctDelta = (now, before) => before ? Math.round(((now - before) / before) * 100) : null;
@@ -321,7 +357,7 @@ function defaultState() {
     diet: { days: {} },
     grocery: { days: 7, items: [] },
     chat: [],
-    settings: { provider: 'gemini', apiKey: '', model: '', keys: {}, models: {}, fallback: true, weightUnit: 'kg', gistToken: '', gistId: '', lastCloudBackup: 0, lastExport: 0 },
+    settings: { provider: 'gemini', apiKey: '', model: '', keys: {}, models: {}, fallback: true, weightUnit: 'kg', dateFormat: 'DD/MM/YYYY', gistToken: '', gistId: '', lastCloudBackup: 0, lastExport: 0 },
   };
 }
 
@@ -441,7 +477,7 @@ async function cloudRestore() {
     const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
     const data = JSON.parse(text);
     if (!data.exercises || !data.sets) throw new Error('Backup file is not valid');
-    const when = new Date(gist.updated_at).toLocaleString();
+    const wd = new Date(gist.updated_at); const when = `${fmtDate(dayKey(wd))} ${pad(wd.getHours())}:${pad(wd.getMinutes())}`;
     if (!confirm(`Restore backup from ${when}? This replaces the data on this phone.`)) return;
     const keep = { keys: st.keys, gistToken: st.gistToken, spotify: st.spotify };
     data.settings = Object.assign({}, data.settings, keep, { gistId: gist.id, lastCloudBackup: Date.now() });
@@ -469,6 +505,7 @@ const UI = {
   dietDate: todayKey(),
   trainSearch: '',
   trainCats: [],
+  trainLimit: 30,
   logDate: null,
   progressEx: null,
   progressMetric: 'weight',
@@ -579,6 +616,14 @@ function viewTrain() {
     h += `<button class="btn primary block" data-act="addWorkoutEx" style="margin-bottom:6px">+ Add exercise</button>`;
   }
 
+  // Recent workouts (3 latest, rest in "Show more")
+  const done = S.workouts.filter(x => x.end).sort((a, b) => b.start - a.start);
+  if (done.length) {
+    h += `<div class="section-title"><h2>Recent workouts</h2></div>`;
+    h += done.slice(0, 3).map(workoutRowHtml).join('');
+    if (done.length > 3) h += `<button class="btn ghost block" data-act="allWorkouts">Show more (${done.length - 3})</button>`;
+  }
+
   // Categories
   h += `<div class="section-title"><h2>Muscle groups</h2><button class="btn sm" data-act="newCategory">+ Group</button></div>`;
   h += `<div class="chips">` + S.categories.map(c => {
@@ -592,24 +637,50 @@ function viewTrain() {
   h += filterChipsHtml(UI.trainCats, 'trainCat');
   h += `<div id="exList">${exerciseListHtml()}</div>`;
 
-  // Workout history
-  const done = S.workouts.filter(x => x.end).sort((a, b) => b.start - a.start).slice(0, 8);
-  if (done.length) {
-    h += `<div class="section-title"><h2>Recent workouts</h2></div>`;
-    for (const x of done) {
-      const cats = x.categoryIds.map(id => catById(id)?.name).filter(Boolean).join(', ') || 'Workout';
-      const n = S.sets.filter(s => s.workoutId === x.id).length;
-      h += `<div class="list-item" data-act="showSummary" data-id="${x.id}"><div class="li-main"><div class="li-title">${esc(cats)}</div>
-        <div class="li-sub">${fmtDay(dayKey(x.start))} · ${fmtDur(x.end - x.start)} · ${n} sets</div></div><span class="chev">›</span></div>`;
-    }
+  return h;
+}
+
+function workoutRowHtml(x) {
+  const cats = x.categoryIds.map(id => catById(id)?.name).filter(Boolean).join(', ') || 'Workout';
+  const n = S.sets.filter(s => s.workoutId === x.id).length;
+  return `<div class="list-item" data-act="showSummary" data-id="${x.id}"><div class="li-main"><div class="li-title ellipsis">${esc(cats)}</div>
+    <div class="li-sub">${fmtDay(dayKey(x.start))} · ${fmtDur(x.end - x.start)} · ${n} set${n === 1 ? '' : 's'}</div></div><span class="chev">›</span></div>`;
+}
+let wFrom = '', wTo = '';
+function allWorkoutsSheet() {
+  let h = sheetHead('All workouts');
+  // The date boxes are never re-drawn while you type (that broke typing the year); only the list below updates.
+  h += `<div class="grid2"><label class="field"><span>From</span>${dateField({ handler: 'wFrom', iso: wFrom, id: 'wFromIn', max: todayKey() })}</label>
+    <label class="field"><span>To</span>${dateField({ handler: 'wTo', iso: wTo, id: 'wToIn', max: todayKey() })}</label></div>${dateHint()}`;
+  return h + `<div id="wList">${allWorkoutsListHtml()}</div>`;
+}
+const validDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && +v.slice(0, 4) >= 1900 ? v : '';
+function logNoteText() {
+  const d = UI.logDate; if (!d || d === todayKey()) return '';
+  if (d > todayKey()) return 'That date is in the future — pick today or earlier.';
+  return `Logging for ${fmtDay(d)}${activeWorkout() ? ' — saved to your history, not to the current workout' : ''}.`;
+}
+function allWorkoutsListHtml() {
+  const all = S.workouts.filter(x => x.end).sort((a, b) => b.start - a.start);
+  const list = all.filter(x => { const k = dayKey(x.start); return (!wFrom || k >= wFrom) && (!wTo || k <= wTo); });
+  let h = `<div class="spread" style="margin:-2px 2px 10px"><span class="tiny muted">${list.length} of ${all.length} workout${all.length === 1 ? '' : 's'}${wFrom > todayKey() ? ' · “From” is in the future' : wFrom && wTo && wFrom > wTo ? ' · “From” is after “To”' : ''}</span>
+    ${wFrom || wTo ? '<button class="btn xs ghost" data-act="wClear">Clear dates</button>' : ''}</div>`;
+  if (!list.length) h += `<div class="empty"><div class="big">📅</div>No workouts in this date range.</div>`;
+  let month = null;
+  for (const x of list) {
+    const m = new Date(x.start).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    if (m !== month) { h += `<div class="date-head">${esc(m)}</div>`; month = m; }
+    h += workoutRowHtml(x);
   }
   return h;
 }
 
 function exerciseListHtml() {
   const q = UI.trainSearch.trim().toLowerCase();
-  const list = S.exercises.filter(e => (!q || e.name.toLowerCase().includes(q)) && matchCats(e, UI.trainCats)).sort((a, b) => a.name.localeCompare(b.name));
-  if (!list.length) return `<div class="empty"><div class="big">🏋️</div>No exercises found.</div>`;
+  const all = S.exercises.filter(e => (!q || e.name.toLowerCase().includes(q)) && matchCats(e, UI.trainCats)).sort((a, b) => a.name.localeCompare(b.name));
+  if (!all.length) return `<div class="empty"><div class="big">🏋️</div>No exercises found.</div>`;
+  const list = all.slice(0, UI.trainLimit);
+  const more = all.length - list.length;
   return list.map(e => {
     const rec = records(e.id);
     const cats = e.categoryIds.map(id => catById(id)?.name).filter(Boolean);
@@ -617,7 +688,8 @@ function exerciseListHtml() {
       <div class="li-title ellipsis">${esc(e.name)}</div>
       <div class="li-sub">${cats.map(c => `<span class="tag">${esc(c)}</span>`).join('') || '<span class="tag">No group</span>'}
       ${rec ? ` · PR ${fmtN(num(rec.weight.weight))} ${wu()}` : ''}</div></div><span class="chev">›</span></div>`;
-  }).join('');
+  }).join('') + (more > 0 ? `<button class="btn ghost block" data-act="moreExercises">Show more (${Math.min(30, more)} of ${more} left)</button>` : '')
+    + `<div class="tiny muted" style="text-align:center;margin-top:6px">Showing ${list.length} of ${all.length}</div>`;
 }
 
 function workoutExIds(w) {
@@ -683,9 +755,9 @@ function exerciseSheet(exId) {
     h += `<div class="card" style="background:var(--card2)"><h3>Add set</h3>
       <div class="grid2"><label class="field"><span>Weight (${wu()})</span><input type="text" inputmode="decimal" id="nsW" value="${last.weight ?? ''}"></label>
       <label class="field"><span>Reps</span><input type="text" inputmode="numeric" id="nsR" value="${last.reps ?? ''}"></label></div>
-      <div class="grid2"><label class="field"><span>Date</span><input type="date" id="nsD" value="${UI.logDate || todayKey()}" max="${todayKey()}" data-in="logDate"></label>
+      <div class="grid2"><label class="field"><span>Date</span>${dateField({ handler: 'logDate', iso: UI.logDate || todayKey(), id: 'nsD', max: todayKey() })}</label>
       <label class="field"><span>Notes</span><input type="text" id="nsN" placeholder="optional"></label></div>
-      ${UI.logDate && UI.logDate !== todayKey() ? `<p class="tiny" style="color:var(--accent2);margin:-4px 0 8px">Logging for ${fmtDay(UI.logDate)}${activeWorkout() ? ' — saved to your history, not to the current workout' : ''}.</p>` : ''}
+      <p class="tiny" id="logNote" style="color:var(--accent2);margin:-4px 0 8px">${logNoteText()}</p>${dateHint()}
       <button class="btn primary block" data-act="sheetAddSet" data-id="${e.id}">+ Log set</button></div>`;
 
     h += `<div class="row" style="margin:6px 0 4px"><button class="btn sm" data-act="viewProgressFor" data-id="${e.id}">📈 Progress graph</button>
@@ -715,7 +787,7 @@ function setSheet(setId) {
     return sheetHead('Edit set') + `<p class="muted" style="margin-top:-6px">${esc(e?.name || '')}</p>
       <div class="grid2"><label class="field"><span>Weight (${wu()})</span><input type="text" inputmode="decimal" value="${esc(s.weight)}" data-in="setWeight" data-id="${s.id}"></label>
       <label class="field"><span>Reps</span><input type="text" inputmode="numeric" value="${esc(s.reps)}" data-in="setReps" data-id="${s.id}"></label></div>
-      <label class="field"><span>Date</span><input type="date" value="${dayKey(s.t)}" data-in="setDate" data-id="${s.id}"></label>
+      <label class="field"><span>Date</span>${dateField({ handler: 'setDate', iso: dayKey(s.t), dataId: s.id, max: todayKey() })}</label>${dateHint()}
       <label class="field"><span>Notes</span><textarea data-in="setNotes" data-id="${s.id}">${esc(s.notes)}</textarea></label>
       <button class="btn danger block" data-act="deleteSet" data-id="${s.id}">Delete set</button>`;
   };
@@ -853,12 +925,12 @@ function computeSummary(w) {
 }
 const catNames = (ids) => ids.map(id => catById(id)?.name).filter(Boolean).join(', ');
 
-function summarySheet(wId) {
+function summarySheet(wId, back = false) {
   return () => {
     const w = S.workouts.find(x => x.id === wId); if (!w) return sheetHead('Summary');
     const s = computeSummary(w);
     const li = (arr, empty) => arr.length ? `<ul>${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : `<p class="muted small" style="margin:0">${empty}</p>`;
-    let h = sheetHead('Workout summary');
+    let h = (back ? `<button class="btn xs ghost" data-act="allWorkouts" style="margin-bottom:4px">‹ All workouts</button>` : '') + sheetHead('Workout summary');
     h += `<p class="muted" style="margin-top:-6px">${esc(catNames(w.categoryIds))} · ${fmtDay(dayKey(w.start))}</p>`;
     const p = s.prev?.totals;
     h += `<div class="grid2" style="margin-bottom:14px">
@@ -946,7 +1018,7 @@ function lineChart(pts, bars = false) {
   const labelIdx = [...new Set([0, Math.floor((pts.length - 1) / 2), pts.length - 1])];
   for (const i of labelIdx) {
     const d = keyToDate(pts[i].x);
-    g += `<text x="${x(i)}" y="${H - 8}" fill="#8b92a1" font-size="10" text-anchor="middle">${d.getDate()}/${d.getMonth() + 1}</text>`;
+    g += `<text x="${x(i)}" y="${H - 8}" fill="#8b92a1" font-size="10" text-anchor="middle">${fmtDate(pts[i].x, true)}</text>`;
   }
   if (bars) {
     const bw = Math.max(4, Math.min(22, (W - L - R) / pts.length - 6));
@@ -1187,6 +1259,8 @@ function viewSettings() {
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   let h = '';
   if (!standalone) h += `<div class="notice"><b>Install on your iPhone:</b> open this page in <b>Safari</b> → tap <b>Share</b> → <b>Add to Home Screen</b>. Always open the app from the Home Screen icon so your data stays safe.</div>`;
+  h += `<div class="card" id="dateFmtCard"><h3>Date format</h3><p class="small muted" style="margin-top:0">Used in every date field and chart in the app.</p>
+    <div class="fmt-list">${Object.keys(DATE_FORMATS).map(k => `<button class="fmt-opt ${dfmtName() === k ? 'on' : ''}" data-act="setDateFmt" data-id="${k}"><b>${k}</b><span>${(() => { const keep = S.settings.dateFormat; S.settings.dateFormat = k; const t = fmtDate(todayKey()); S.settings.dateFormat = keep; return t; })()}</span></button>`).join('')}</div></div>`;
   h += `<div class="card"><h3>Units</h3><div class="seg" style="margin:0">${['kg', 'lb'].map(u => `<button class="${st.weightUnit === u ? 'on' : ''}" data-act="setUnit" data-id="${u}">${u}</button>`).join('')}</div></div>`;
   h += `<div class="card"><h3>AI (coach, macros, workout review)</h3>
     <label class="field"><span>Main AI</span><select data-in="setProvider">${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}" ${k === st.provider ? 'selected' : ''}>${v.label} (${v.note})</option>`).join('')}</select></label>
@@ -1333,7 +1407,10 @@ const A = {
   },
   logSetNoWorkout() { pickerSearch = ''; pickerCats = []; openSheet(quickLogPickerSheet); },
   pickerCat(el) { pickerCats = toggleIn(pickerCats, el.dataset.id); renderSheet(); },
-  trainCat(el) { UI.trainCats = toggleIn(UI.trainCats, el.dataset.id); render(); },
+  trainCat(el) { UI.trainCats = toggleIn(UI.trainCats, el.dataset.id); UI.trainLimit = 30; render(); },
+  moreExercises() { UI.trainLimit += 30; $('#exList').innerHTML = exerciseListHtml(); },
+  allWorkouts() { openSheet(allWorkoutsSheet); },
+  wClear() { wFrom = ''; wTo = ''; renderSheet(); },
   quickLogPick(el) { openExerciseForLogging(el.dataset.id); },
   createQuickLogEx() {
     const name = pickerSearch.trim(); if (!name) return;
@@ -1357,7 +1434,7 @@ const A = {
     S.sets = S.sets.filter(s => !(s.workoutId === w.id && s.exerciseId === id));
     w.exerciseIds = workoutExIds(w).filter(x => x !== id); save(); render();
   },
-  showSummary(el) { openSheet(summarySheet(el.dataset.id)); },
+  showSummary(el) { openSheet(summarySheet(el.dataset.id, sheetRender === allWorkoutsSheet)); },
   deleteWorkout(el) {
     if (!confirm('Delete this workout record? Logged sets are kept.')) return;
     S.sets.forEach(s => { if (s.workoutId === el.dataset.id) s.workoutId = null; });
@@ -1414,8 +1491,10 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     addSet(id, w, r); render();
   },
   sheetAddSet(el) {
-    const w = $('#nsW').value, r = $('#nsR').value, n = $('#nsN').value.trim(), d = $('#nsD').value;
+    const w = $('#nsW').value, r = $('#nsR').value, n = $('#nsN').value.trim(), d = $('#nsD').dataset.iso;
     if (!num(r)) { toast('Enter reps'); return; }
+    if (!d) { toast(`Check the date (${dfmtName()})`); return; }
+    if (d && d > todayKey()) { toast("You can't log a set in the future"); return; }
     let t = Date.now();
     if (d && d !== todayKey()) { const x = keyToDate(d), now = new Date(); x.setHours(now.getHours(), now.getMinutes(), now.getSeconds()); t = x.getTime(); }
     addSet(el.dataset.id, w, r, n, t); renderSheet();
@@ -1490,6 +1569,16 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     save(); render(); toast(`${added} added, ${updated} updated (per day × ${S.grocery.days} days)`);
   },
   // Settings
+  openPicker(el) {
+    const nat = el.parentElement.querySelector('.dnative');
+    try { if (nat.showPicker) nat.showPicker(); else nat.click(); } catch (e) { nat.focus(); nat.click(); }
+  },
+  goDateFormat() {
+    if (sheetRender) closeSheet();
+    UI.tab = 'settings'; render();
+    const c = $('#dateFmtCard'); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'start' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1600); }
+  },
+  setDateFmt(el) { S.settings.dateFormat = el.dataset.id; save(); render(); toast(`Dates now shown as ${el.dataset.id}`); },
   goSettings() { UI.tab = 'settings'; window.scrollTo(0, 0); render(); },
   setUnit(el) { S.settings.weightUnit = el.dataset.id; save(); render(); },
   async testAi(el) {
@@ -1520,7 +1609,7 @@ const I = {
     pickerSearch = el.value; const pos = el.selectionStart; renderSheet();
     const n = $('#pickSearch'); if (n) { n.focus(); n.setSelectionRange(pos, pos); }
   },
-  trainSearch(el) { UI.trainSearch = el.value; $('#exList').innerHTML = exerciseListHtml(); },
+  trainSearch(el) { UI.trainSearch = el.value; UI.trainLimit = 30; $('#exList').innerHTML = exerciseListHtml(); },
   exName(el) { exById(el.dataset.id).name = el.value; save(); },
   exNotes(el) { exById(el.dataset.id).notes = el.value; save(); },
   catName(el) { catById(el.dataset.id).name = el.value; save(); },
@@ -1532,10 +1621,25 @@ const I = {
   setReps(el) { S.sets.find(s => s.id === el.dataset.id).reps = Math.round(num(el.value)); save(); },
   setNotes(el) { S.sets.find(s => s.id === el.dataset.id).notes = el.value; save(); },
   setDate(el) {
-    if (!el.value) return; const s = S.sets.find(x => x.id === el.dataset.id);
+    if (!validDay(el.value) || el.value > todayKey()) return; const s = S.sets.find(x => x.id === el.dataset.id);
     const old = new Date(s.t); const d = keyToDate(el.value); d.setHours(old.getHours(), old.getMinutes(), old.getSeconds(), old.getMilliseconds()); s.t = d.getTime(); save();
   },
-  logDate(el) { UI.logDate = el.value || null; renderSheet(); },
+  dateText(el) {
+    const caretAtEnd = el.selectionStart === el.value.length;
+    const masked = maskDate(el.value); if (masked !== el.value) { el.value = masked; if (caretAtEnd) el.setSelectionRange(masked.length, masked.length); }
+    const iso = parseDate(masked); el.dataset.iso = iso;
+    el.classList.toggle('bad', masked.replace(/\D/g, '').length === 8 && !iso);
+    const nat = el.parentElement.querySelector('.dnative'); if (nat) nat.value = iso;
+    const h = I[el.dataset.h]; if (h && (iso || !masked)) h({ value: iso, dataset: el.dataset });
+  },
+  dateNative(el) {
+    const txt = el.parentElement.querySelector('.dtext'); if (!txt || !el.value) return;
+    txt.value = fmtDate(el.value); txt.dataset.iso = el.value; txt.classList.remove('bad');
+    const h = I[txt.dataset.h]; if (h) h({ value: el.value, dataset: txt.dataset });
+  },
+  wFrom(el) { wFrom = validDay(el.value); const l = $('#wList'); if (l) l.innerHTML = allWorkoutsListHtml(); },
+  wTo(el) { wTo = validDay(el.value); if (wTo > todayKey()) wTo = ''; const l = $('#wList'); if (l) l.innerHTML = allWorkoutsListHtml(); },
+  logDate(el) { UI.logDate = validDay(el.value) || null; const n = $('#logNote'); if (n) n.textContent = logNoteText(); },
   progressEx(el) { UI.progressEx = el.value; render(); },
   mealEaten(el) { const f = findMeal(el.dataset.id); f.meal.eaten = el.checked; save(); if (sheetRender) renderSheet(); render(); },
   mealType(el) { findMeal(el.dataset.id).meal.type = el.value; save(); renderSheet(); },
@@ -1576,7 +1680,7 @@ const I = {
   },
 };
 // Text inputs update live; selects/checkboxes/files/range fire on change.
-const LIVE = new Set(['pickSearch', 'trainSearch', 'exName', 'exNotes', 'catName', 'setWeight', 'setReps', 'setNotes', 'mealName', 'prod', 'gi', 'setKey', 'setModel']);
+const LIVE = new Set(['dateText', 'pickSearch', 'trainSearch', 'exName', 'exNotes', 'catName', 'setWeight', 'setReps', 'setNotes', 'mealName', 'prod', 'gi', 'setKey', 'setModel']);
 document.addEventListener('input', (e) => {
   const el = e.target.closest('[data-in]'); if (!el) return;
   const n = el.dataset.in;

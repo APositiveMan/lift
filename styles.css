@@ -289,3 +289,17 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); }
 #spCard { scroll-margin-top: calc(var(--safe-top) + 70px); }
 .card.flash { animation: flash 1.6s ease-out; }
 @keyframes flash { 0%, 40% { border-color: #1DB954; box-shadow: 0 0 0 3px rgba(29,185,84,.35); } 100% { border-color: var(--line); box-shadow: none; } }
+
+/* Date fields in the user's chosen format */
+.dfield { position: relative; display: flex; align-items: center; }
+.dfield .dtext { padding-right: 44px; font-variant-numeric: tabular-nums; }
+.dfield .dtext.bad { border-color: var(--bad); }
+.dpick { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: 0; font-size: 18px; width: 38px; height: 38px; cursor: pointer; }
+.dnative { position: absolute; right: 4px; bottom: 0; width: 38px; height: 1px; opacity: 0; pointer-events: none; border: 0; padding: 0; }
+.date-hint { margin: -4px 2px 10px; cursor: pointer; }
+.date-hint u { color: var(--blue); text-decoration: none; }
+.fmt-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fmt-opt { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
+.fmt-opt b { font-size: 14px; } .fmt-opt span { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fmt-opt.on { border-color: var(--accent); background: #2a1710; } .fmt-opt.on span { color: var(--accent2); }
+#dateFmtCard { scroll-margin-top: calc(var(--safe-top) + 70px); }
