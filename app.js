@@ -1108,10 +1108,10 @@ function summarySheet(wId, back = false) {
 
 /* ============================== PROGRESS ============================== */
 const METRICS = {
-  weight: { label: 'Max weight', fn: (ss) => Math.max(...ss.map(s => num(s.weight))), unit: () => wu() },
-  reps: { label: 'Max reps', fn: (ss) => Math.max(...ss.map(s => num(s.reps))), unit: () => 'reps' },
-  set: { label: 'Best set', fn: (ss) => Math.max(...ss.map(vol)), unit: () => `${wu()}×reps` },
-  volume: { label: 'Total volume', fn: (ss) => ss.reduce((a, s) => a + vol(s), 0), unit: () => wu() },
+  weight: { label: 'Max weight', info: (u) => `The heaviest weight you lifted in one set on each day, no matter how many reps. Example: sets of 60 × 8, 65 × 5 and 62.5 × 6 → <b>65 ${u}</b>.`, fn: (ss) => Math.max(...ss.map(s => num(s.weight))), unit: () => wu() },
+  reps: { label: 'Max reps', info: (u) => `The most reps you did in one set on each day, at any weight. Example: sets of 60 × 8, 50 × 12 and 65 × 5 → <b>12 reps</b>.`, fn: (ss) => Math.max(...ss.map(s => num(s.reps))), unit: () => 'reps' },
+  set: { label: 'Best set', info: (u) => `Your strongest single set on each day, scored as weight × reps. Example: 60 × 8 = 480 and 65 × 5 = 325 → <b>480</b> (60 ${u} × 8 was the best set).`, fn: (ss) => Math.max(...ss.map(vol)), unit: () => `${wu()}×reps` },
+  volume: { label: 'Total volume', info: (u) => `All the work you did for this exercise on each day: weight × reps for every set, added up. Example: 3 sets of 60 × 8 → 480 + 480 + 480 = <b>1,440 ${u}</b>.`, fn: (ss) => ss.reduce((a, s) => a + vol(s), 0), unit: () => wu() },
 };
 
 function viewProgress() {
@@ -1127,6 +1127,7 @@ function viewProgress() {
 
   let h = `<select data-in="progressEx" style="margin-bottom:10px">${withSets.map(x => `<option value="${x.id}" ${x.id === e.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
   h += `<div class="seg">${Object.entries(METRICS).map(([k, v]) => `<button class="${k === UI.progressMetric ? 'on' : ''}" data-act="metric" data-id="${k}">${v.label}</button>`).join('')}</div>`;
+  h += `<p class="metric-info">ⓘ ${METRICS[UI.progressMetric].info(wu())} One dot per training day; the gold dot is your best.</p>`;
   h += `<div class="card"><div class="spread"><h3 style="margin:0">${esc(m.label)}</h3><span class="muted small">${esc(m.unit())}</span></div>
     <div class="chart-wrap">${lineChart(pts)}</div></div>`;
   h += `<div class="pr-cards">

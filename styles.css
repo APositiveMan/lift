@@ -303,3 +303,6 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); }
 .fmt-opt b { font-size: 14px; } .fmt-opt span { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .fmt-opt.on { border-color: var(--accent); background: #2a1710; } .fmt-opt.on span { color: var(--accent2); }
 #dateFmtCard { scroll-margin-top: calc(var(--safe-top) + 70px); }
+
+.metric-info { font-size: 13px; color: var(--muted); margin: -4px 4px 12px; line-height: 1.45; }
+.metric-info b { color: var(--text); }
