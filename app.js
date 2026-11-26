@@ -263,7 +263,8 @@ function viewTrain() {
   if (!S.settings.gistToken && S.sets.length && Date.now() - (S.settings.lastExport || 0) > 7 * 864e5)
     h += `<div class="notice warn" data-act="goSettings" style="cursor:pointer">☁️ Your progress is only on this phone. <b>Turn on automatic backup</b> in Settings →</div>`;
   if (!w) {
-    h += `<button class="btn primary block" data-act="startWorkout" style="padding:15px;font-size:17px">▶ Start workout</button>`;
+    h += `<button class="btn block start-btn" data-act="startWorkout">▶ Start workout</button>`;
+    h += `<button class="btn block log-btn" data-act="logSetNoWorkout">＋ Log a set without workout</button>`;
   } else {
     // Only the exercises you add yourself during this workout
     const exs = workoutExIds(w).map(exById).filter(Boolean);
@@ -444,6 +445,24 @@ function exercisePickerSheet() {
   if (b.length) h += `<div class="date-head">Other exercises</div>` + b.map(row).join('');
   if (!list.length && !q) h += `<p class="muted small">All your exercises are already in this workout. Type a name above to create a new one.</p>`;
   return h;
+}
+
+/* ---- Log a single set outside a workout: pick exercise, then its sheet opens ---- */
+function quickLogPickerSheet() {
+  const q = pickerSearch.trim().toLowerCase();
+  const list = S.exercises.filter(e => !q || e.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name));
+  let h = sheetHead('Log a set');
+  h += `<p class="muted small" style="margin-top:-6px">Pick the exercise — the set is saved to your history without starting a workout.</p>`;
+  h += `<input type="text" id="pickSearch" placeholder="Search or type a new exercise…" value="${esc(pickerSearch)}" data-in="pickSearch" style="margin-bottom:10px">`;
+  if (q && !S.exercises.some(e => e.name.toLowerCase() === q))
+    h += `<button class="btn block" data-act="createQuickLogEx" style="margin-bottom:10px">＋ Create “${esc(pickerSearch.trim())}”</button>`;
+  h += list.map(e => `<div class="list-item" data-act="quickLogPick" data-id="${e.id}"><div class="li-main"><div class="li-title">${esc(e.name)}</div>
+    <div class="li-sub">${e.categoryIds.map(id => catById(id)?.name).filter(Boolean).map(c => `<span class="tag">${esc(c)}</span>`).join('') || '<span class="tag">No group</span>'}</div></div><span class="chev">›</span></div>`).join('');
+  return h;
+}
+function openExerciseForLogging(id) {
+  openSheet(exerciseSheet(id));
+  setTimeout(() => { const w = $('#nsW'); if (w) { w.scrollIntoView({ block: 'center' }); w.focus(); } }, 150);
 }
 
 /* ---- Workout start / end ---- */
@@ -989,6 +1008,12 @@ const A = {
     if (!confirm('End this workout?')) return;
     w.end = Date.now(); S.activeWorkoutId = null; save(true); render();
     openSheet(summarySheet(w.id));
+  },
+  logSetNoWorkout() { pickerSearch = ''; openSheet(quickLogPickerSheet); },
+  quickLogPick(el) { openExerciseForLogging(el.dataset.id); },
+  createQuickLogEx() {
+    const name = pickerSearch.trim(); if (!name) return;
+    const e = { id: uid(), name, categoryIds: [], notes: '' }; S.exercises.push(e); save(); openExerciseForLogging(e.id);
   },
   addWorkoutEx() { pickerSearch = ''; openSheet(exercisePickerSheet); setTimeout(() => $('#pickSearch')?.focus(), 100); },
   pickWorkoutEx(el) {
