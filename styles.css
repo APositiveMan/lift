@@ -306,3 +306,19 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); }
 
 .metric-info { font-size: 13px; color: var(--muted); margin: -4px 4px 12px; line-height: 1.45; }
 .metric-info b { color: var(--text); }
+
+a.link { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.ex-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 15px; font-variant-numeric: tabular-nums; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.ex-table th { text-align: left; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; padding: 8px 10px; font-weight: 600; }
+.ex-table td { padding: 9px 10px; border-top: 1px solid var(--line); }
+.ex-table td:first-child { color: var(--muted); }
+.ex-table tr.hit td { background: #2a1710; }
+.ex-table tr.hit td:first-child { color: var(--accent2); font-weight: 700; }
+.ex-table td.em { color: var(--accent2); font-weight: 700; }
+.ex-steps { margin: 0; padding-left: 20px; } .ex-steps li { margin-bottom: 6px; }
+.ex-result { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding: 12px 14px; border-radius: 12px; background: linear-gradient(135deg, #3a2410, #2a1710); border: 1px solid #5a3a18; }
+.ex-result span { color: var(--muted); font-size: 14px; } .ex-result b { font-size: 22px; color: var(--gold); }
+.ex-trend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ex-trend div { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; position: relative; }
+.ex-trend span { display: block; font-size: 11px; color: var(--muted); } .ex-trend b { font-size: 16px; }
+.ex-trend .up { position: absolute; top: 6px; right: 8px; font-style: normal; font-size: 10px; color: var(--good); }

@@ -1108,11 +1108,59 @@ function summarySheet(wId, back = false) {
 
 /* ============================== PROGRESS ============================== */
 const METRICS = {
-  weight: { label: 'Max weight', info: (u) => `The heaviest weight you lifted in one set on each day, no matter how many reps. Example: sets of 60 × 8, 65 × 5 and 62.5 × 6 → <b>65 ${u}</b>.`, fn: (ss) => Math.max(...ss.map(s => num(s.weight))), unit: () => wu() },
-  reps: { label: 'Max reps', info: (u) => `The most reps you did in one set on each day, at any weight. Example: sets of 60 × 8, 50 × 12 and 65 × 5 → <b>12 reps</b>.`, fn: (ss) => Math.max(...ss.map(s => num(s.reps))), unit: () => 'reps' },
-  set: { label: 'Best set', info: (u) => `Your strongest single set on each day, scored as weight × reps. Example: 60 × 8 = 480 and 65 × 5 = 325 → <b>480</b> (60 ${u} × 8 was the best set).`, fn: (ss) => Math.max(...ss.map(vol)), unit: () => `${wu()}×reps` },
-  volume: { label: 'Total volume', info: (u) => `All the work you did for this exercise on each day: weight × reps for every set, added up. Example: 3 sets of 60 × 8 → 480 + 480 + 480 = <b>1,440 ${u}</b>.`, fn: (ss) => ss.reduce((a, s) => a + vol(s), 0), unit: () => wu() },
+  weight: { label: 'Max weight', info: () => `The heaviest weight you lifted in one set each day, no matter how many reps.`, fn: (ss) => Math.max(...ss.map(s => num(s.weight))), unit: () => wu() },
+  reps: { label: 'Max reps', info: () => `The most reps you did in one set each day, at any weight.`, fn: (ss) => Math.max(...ss.map(s => num(s.reps))), unit: () => 'reps' },
+  set: { label: 'Best set', info: () => `Your strongest single set each day, scored as weight × reps.`, fn: (ss) => Math.max(...ss.map(vol)), unit: () => `${wu()}×reps` },
+  volume: { label: 'Total volume', info: () => `All the work you did for this exercise each day: weight × reps for every set, added together.`, fn: (ss) => ss.reduce((a, s) => a + vol(s), 0), unit: () => wu() },
 };
+
+/* ---- "Show example" for the Progress options: one simple bench-press day, worked through step by step ---- */
+const EX_SETS = [[60, 10], [70, 6], [75, 3]]; // weight, reps
+function metricExampleSheet(k) {
+  return () => {
+    const u = wu(); const m = METRICS[k];
+    const vols = EX_SETS.map(([w, r]) => w * r); const total = vols.reduce((a, b) => a + b, 0);
+    const pick = { weight: 2, reps: 0, set: 0, volume: -1 }[k];
+    const showCalc = k === 'set' || k === 'volume';
+    const row = ([w, r], i) => `<tr class="${pick === i || pick === -1 ? 'hit' : ''}"><td>Set ${i + 1}</td>
+      <td class="${k === 'weight' ? 'em' : ''}">${w} ${u}</td><td class="${k === 'reps' ? 'em' : ''}">${r}</td>${showCalc ? `<td>${w} × ${r} = <b>${vols[i]}</b></td>` : ''}</tr>`;
+    const table = `<table class="ex-table"><thead><tr><th></th><th>Weight</th><th>Reps</th>${showCalc ? '<th>Weight × reps</th>' : ''}</tr></thead>
+      <tbody>${EX_SETS.map(row).join('')}</tbody></table>`;
+    const T = {
+      weight: {
+        steps: [`Look at the <b>weight</b> column only — ignore the reps.`, `Find the biggest number: 60, 70 or <b>75</b>.`, `Set 3 wins, even though it was only 3 reps.`],
+        result: `75 ${u}`, trend: [[`Week 1`, 75], [`Week 2`, 77.5], [`Week 3`, 80]], trendUnit: u,
+        tip: `Great for tracking <b>pure strength</b>. A heavy set of 1 rep counts just as much as a set of 10.`,
+      },
+      reps: {
+        steps: [`Look at the <b>reps</b> column only — ignore the weight.`, `Find the biggest number: <b>10</b>, 6 or 3.`, `Set 1 wins, even though it was the lightest weight.`],
+        result: `10 reps`, trend: [[`Week 1`, 10], [`Week 2`, 11], [`Week 3`, 12]], trendUnit: 'reps',
+        tip: `Most useful for <b>bodyweight exercises</b> (pull-ups, dips, push-ups) or when you keep the same weight and try to do more reps.`,
+      },
+      set: {
+        steps: [`Give every set a score: <b>weight × reps</b>.`, `Set 1: 60 × 10 = <b>600</b> · Set 2: 70 × 6 = 420 · Set 3: 75 × 3 = 225.`, `The highest score wins: <b>600</b> (Set 1).`],
+        result: `600`, trend: [[`Week 1`, 600], [`Week 2`, 630], [`Week 3`, 680]], trendUnit: `${u}×reps`,
+        tip: `It rewards <b>both</b> weight and reps, so you can compare a heavy set with a lighter set of more reps. If this number goes up, you did your strongest set yet.`,
+      },
+      volume: {
+        steps: [`Score every set: <b>weight × reps</b> → 600, 420 and 225.`, `Add them all together: 600 + 420 + 225 = <b>${total.toLocaleString()}</b>.`, `Every set counts — doing an extra set makes the number bigger.`],
+        result: `${total.toLocaleString()} ${u}`, trend: [[`Week 1`, 1245], [`Week 2`, 1380], [`Week 3`, 1520]], trendUnit: u,
+        tip: `Shows <b>how much work</b> you did in total. Volume going up over time is a good sign for building muscle.`,
+      },
+    }[k];
+    let h = sheetHead(`${m.label} — example`);
+    h += `<p class="muted" style="margin-top:-6px">Say you did <b style="color:var(--text)">Bench Press</b> on Monday and logged these 3 sets:</p>${table}`;
+    h += `<h3 style="margin:16px 0 6px">How Lift works it out</h3><ol class="ex-steps">${T.steps.map(x => `<li>${x}</li>`).join('')}</ol>`;
+    h += `<div class="ex-result"><span>Monday's ${m.label.toLowerCase()}</span><b>${T.result}</b></div>`;
+    h += `<h3 style="margin:16px 0 6px">What the chart shows</h3>
+      <p class="small" style="margin:0 0 8px">That result becomes <b>one dot</b> for Monday. Train again the next weeks and you get more dots — a line going <b>up</b> means you're improving:</p>
+      <div class="ex-trend">${T.trend.map(([l, v], i) => `<div><span>${l}</span><b>${v.toLocaleString()}</b>${i ? `<i class="up">▲</i>` : ''}</div>`).join('')}</div>
+      <p class="tiny muted" style="margin:6px 0 0">Values in ${esc(T.trendUnit)}. The <span style="color:var(--gold)">gold dot</span> on your chart is your best day ever.</p>`;
+    h += `<div class="notice" style="margin-top:14px">💡 ${T.tip}</div>`;
+    h += `<button class="btn primary block" data-act="closeSheet">Got it</button>`;
+    return h;
+  };
+}
 
 function viewProgress() {
   const withSets = S.exercises.filter(e => S.sets.some(s => s.exerciseId === e.id)).sort((a, b) => a.name.localeCompare(b.name));
@@ -1127,7 +1175,7 @@ function viewProgress() {
 
   let h = `<select data-in="progressEx" style="margin-bottom:10px">${withSets.map(x => `<option value="${x.id}" ${x.id === e.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
   h += `<div class="seg">${Object.entries(METRICS).map(([k, v]) => `<button class="${k === UI.progressMetric ? 'on' : ''}" data-act="metric" data-id="${k}">${v.label}</button>`).join('')}</div>`;
-  h += `<p class="metric-info">ⓘ ${METRICS[UI.progressMetric].info(wu())} One dot per training day; the gold dot is your best.</p>`;
+  h += `<p class="metric-info">ⓘ ${METRICS[UI.progressMetric].info()} <a href="#" class="link" data-act="metricExample" data-id="${UI.progressMetric}">Show example</a></p>`;
   h += `<div class="card"><div class="spread"><h3 style="margin:0">${esc(m.label)}</h3><span class="muted small">${esc(m.unit())}</span></div>
     <div class="chart-wrap">${lineChart(pts)}</div></div>`;
   h += `<div class="pr-cards">
@@ -1660,6 +1708,7 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
   },
   viewProgressFor(el) { UI.progressEx = el.dataset.id; UI.tab = 'progress'; closeSheet(); window.scrollTo(0, 0); },
   askCoachAbout(el) { const e = exById(el.dataset.id); closeSheet(); UI.tab = 'coach'; render(); sendChat(`How do I properly do the ${e.name}?`); },
+  metricExample(el) { openSheet(metricExampleSheet(el.dataset.id)); },
   metric(el) { UI.progressMetric = el.dataset.id; render(); },
   // Coach
   sendChat() { const b = $('#chatBox'); const v = b.value; b.value = ''; sendChat(v); },
