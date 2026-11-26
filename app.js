@@ -809,6 +809,9 @@ document.addEventListener('visibilitychange', () => {
 setInterval(() => { if (document.visibilityState === 'visible' && S.settings.cloudLinked && Date.now() - lastSyncAt > 110000) cloudBackup(); }, 120000);
 
 /* ============================== UI state ============================== */
+let aiBusySince = 0;
+setInterval(() => { if (UI.aiBusy && !aiBusySince) aiBusySince = Date.now(); if (!UI.aiBusy) aiBusySince = 0;
+  if (UI.aiBusy && Date.now() - aiBusySince > 75000) { UI.aiBusy = false; UI.aiTarget = null; aiBusySince = 0; if (sheetRender) renderSheet(); render(); } }, 5000);
 const UI = {
   tab: 'train',
   foodSub: 'diet',
@@ -1673,9 +1676,12 @@ async function callProvider(prov, { system, messages, json }) {
   const model = (st.models[prov] || PROVIDERS[prov].defModel).trim();
   const name = PROVIDERS[prov].label;
   let res, data;
+  // Give up after 45 s so the AI buttons can never get stuck (e.g. when the phone pauses the app mid-request)
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 45000);
+  const f = (u, o) => fetch(u, { ...o, signal: ctl.signal });
   try {
     if (prov === 'gemini') {
-      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      res = await f(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
@@ -1684,7 +1690,7 @@ async function callProvider(prov, { system, messages, json }) {
         }),
       });
     } else if (prov === 'anthropic') {
-      res = await fetch('https://api.anthropic.com/v1/messages', {
+      res = await f('https://api.anthropic.com/v1/messages', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({ model, max_tokens: 2500, system, messages: messages.map(m => ({ role: m.role, content: m.content })) }),
       });
@@ -1692,10 +1698,14 @@ async function callProvider(prov, { system, messages, json }) {
       const url = prov === 'groq' ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://openrouter.ai/api/v1/chat/completions';
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
       if (prov === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Lift'; }
-      res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ model, temperature: json ? 0.2 : 0.6, messages: [{ role: 'system', content: system }, ...messages.map(m => ({ role: m.role, content: m.content }))] }) });
+      res = await f(url, { method: 'POST', headers, body: JSON.stringify({ model, temperature: json ? 0.2 : 0.6, messages: [{ role: 'system', content: system }, ...messages.map(m => ({ role: m.role, content: m.content }))] }) });
     }
-  } catch (e) { throw new AIError(`${name}: network error`, true); }
-  data = await res.json().catch(() => ({}));
+  } catch (e) {
+    clearTimeout(timer);
+    const err = new AIError(`${name}: ${e.name === 'AbortError' ? 'took too long (no answer in 45 s) — try again' : 'network error'}`, true);
+    err.timeout = e.name === 'AbortError'; throw err;
+  }
+  data = await res.json().catch(() => ({})); clearTimeout(timer);
   if (!res.ok) {
     const msg = data.error?.message || data.error?.error?.message || `error ${res.status}`;
     throw new AIError(`${name}: ${msg}`, res.status === 429 || res.status >= 500 || /overload|unavailable|capacity|busy/i.test(msg));
@@ -1721,11 +1731,11 @@ async function aiCall(opts, only = null) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const txt = await callProvider(prov, opts);
-        if (prov !== st.provider && !only) toast(`${PROVIDERS[st.provider].label} was busy — answered by ${PROVIDERS[prov].label}`, false, 3500);
+        if (prov !== st.provider && !only && has(st.provider)) toast(`${PROVIDERS[st.provider].label} was busy — answered by ${PROVIDERS[prov].label}`, false, 3500);
         return txt;
       } catch (e) {
         // Retry the same AI once after a short pause if it was only busy, but don't wait if a backup exists.
-        if (e.retryable && attempt === 0 && i === order.length - 1) { await new Promise(r => setTimeout(r, 1500)); continue; }
+        if (e.retryable && !e.timeout && attempt === 0 && i === order.length - 1) { await new Promise(r => setTimeout(r, 1500)); continue; }
         errors.push(e.message); break;
       }
     }
@@ -2040,7 +2050,11 @@ const I = {
   },
   setProvider(el) { S.settings.provider = el.value; save(); render(); },
   setFallback(el) { S.settings.fallback = el.checked; save(); },
-  setKey(el) { S.settings.keys[el.dataset.id] = el.value.trim(); save(); },
+  setKey(el) {
+    const st = S.settings; st.keys[el.dataset.id] = el.value.trim();
+    if (!(st.keys[st.provider] || '').trim()) { const other = Object.keys(PROVIDERS).find(p => (st.keys[p] || '').trim()); if (other) st.provider = other; }
+    save();
+  },
   setGist(el) {
     const v = el.value.trim(); if (v === S.settings.gistToken) return;
     S.settings.gistToken = v; S.settings.gistId = ''; S.settings.cloudLinked = false; save(true);
