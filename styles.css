@@ -257,6 +257,7 @@ input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); }
   box-shadow: 0 8px 26px rgba(255, 90, 46, .45), inset 0 1px 0 rgba(255,255,255,.25);
 }
 .log-btn {
-  margin-top: 10px; padding: 15px; font-size: 17px; border-radius: 14px; color: #dbe7ff;
-  background: #16295a; border: 1px solid #24408a;
+  margin-top: 10px; padding: 15px; font-size: 17px; border-radius: 14px; color: #fff; border: 0;
+  background: linear-gradient(135deg, #2f6bff 0%, #1f47c9 55%, #182e8f 100%);
+  box-shadow: 0 6px 20px rgba(47, 107, 255, .35), inset 0 1px 0 rgba(255,255,255,.2);
 }
