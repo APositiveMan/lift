@@ -513,6 +513,115 @@ function load() {
   S.grocery = Object.assign({ days: 7, items: [] }, S.grocery);
   migrateMuscleGroups();
   migrateCardio();
+  S.deleted = S.deleted || {}; S.su = S.su || {};
+  S.chat.forEach((m, i) => { if (!m.id) { m.id = 'c' + hashStr(m.role + '|' + m.content); m.t = m.t || i; } });
+  rebuildSnap();
+}
+
+/* ============================== Sync: change tracking ============================== */
+// Every record gets "u" (last changed, ms). Deleted ids are remembered in S.deleted so other devices delete them too.
+const hashStr = (str) => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+const SCALARS = { weightUnit: [() => S.settings.weightUnit, (v) => { S.settings.weightUnit = v; }], dateFormat: [() => S.settings.dateFormat, (v) => { S.settings.dateFormat = v; }], groceryDays: [() => S.grocery.days, (v) => { S.grocery.days = v; }] };
+function allRecords(D = S) {
+  const out = [];
+  const add = (type, list) => (list || []).forEach(r => r && r.id && out.push([type + ':' + r.id, r]));
+  add('cat', D.categories); add('ex', D.exercises); add('set', D.sets); add('w', D.workouts);
+  for (const k in (D.diet?.days || {})) add('meal', D.diet.days[k].meals);
+  add('g', D.grocery?.items); add('chat', D.chat);
+  return out;
+}
+const recJson = (r) => JSON.stringify(r, (k, v) => (k === 'u' ? undefined : v));
+let snap = new Map();
+// Re-run the normal load steps on the current S without treating the reset as deletions to sync
+function load2() { localStorage.setItem(STORE_KEY, JSON.stringify(S)); load(); }
+function rebuildSnap() {
+  S.grocery ||= { days: 7, items: [] }; S.settings ||= {};
+  snap = new Map(allRecords().map(([k, r]) => [k, recJson(r)]));
+  for (const k in SCALARS) snap.set('sc:' + k, JSON.stringify(SCALARS[k][0]()));
+}
+function stampChanges() {
+  if (!S) return; S.deleted ||= {}; S.su ||= {}; S.grocery ||= { days: 7, items: [] }; S.settings ||= {};
+  const now = Date.now(); const seen = new Set();
+  for (const [k, r] of allRecords()) { seen.add(k); if (snap.get(k) !== recJson(r)) r.u = now; }
+  for (const k of snap.keys()) if (!k.startsWith('sc:') && !seen.has(k)) S.deleted[k.slice(k.indexOf(':') + 1)] = now;
+  for (const k in SCALARS) if (snap.get('sc:' + k) !== JSON.stringify(SCALARS[k][0]())) S.su[k] = now;
+  // forget deletions older than 120 days
+  for (const id in S.deleted) if (now - S.deleted[id] > 120 * 864e5) delete S.deleted[id];
+  rebuildSnap();
+}
+
+/* ============================== Sync: merge two copies of the data ============================== */
+function mergeData(Lsrc, Rsrc) {
+  const L = JSON.parse(JSON.stringify(Lsrc)), R = JSON.parse(JSON.stringify(Rsrc));
+  R.categories ||= []; R.exercises ||= []; R.sets ||= []; R.workouts ||= []; R.chat ||= [];
+  R.diet ||= { days: {} }; R.grocery ||= { days: 7, items: [] };
+  const lc = (x) => String(x || '').trim().toLowerCase();
+  const deleted = { ...(R.deleted || {}) };
+  for (const id in (L.deleted || {})) deleted[id] = Math.max(deleted[id] || 0, L.deleted[id]);
+  // Same muscle group / exercise created separately on two devices → use one id (the backup's)
+  const remap = (list, rlist) => {
+    const m = {}; const rByName = new Map(rlist.map(r => [lc(r.name), r.id])); const lIds = new Set(list.map(x => x.id));
+    for (const x of list) { const rid = rByName.get(lc(x.name)); if (rid && rid !== x.id && !lIds.has(rid)) m[x.id] = rid; }
+    return m;
+  };
+  const cm = remap(L.categories, R.categories);
+  if (Object.keys(cm).length) {
+    L.categories.forEach(c => { if (cm[c.id]) c.id = cm[c.id]; });
+    L.exercises.forEach(e => { e.categoryIds = [...new Set(e.categoryIds.map(id => cm[id] || id))]; });
+    L.workouts.forEach(w => { w.categoryIds = [...new Set(w.categoryIds.map(id => cm[id] || id))]; });
+  }
+  const em = remap(L.exercises, R.exercises);
+  if (Object.keys(em).length) {
+    L.exercises.forEach(e => { if (em[e.id]) e.id = em[e.id]; });
+    L.sets.forEach(x => { if (em[x.exerciseId]) x.exerciseId = em[x.exerciseId]; });
+    L.workouts.forEach(w => { if (w.exerciseIds) w.exerciseIds = [...new Set(w.exerciseIds.map(id => em[id] || id))]; });
+  }
+  // Newest version of each record wins; a deletion wins over anything older than it
+  const mergeList = (a = [], b = []) => {
+    const m = new Map();
+    for (const r of [...a, ...b]) { const cur = m.get(r.id); if (!cur || (r.u || 0) > (cur.u || 0)) m.set(r.id, r); }
+    return [...m.values()].filter(r => !(deleted[r.id] && deleted[r.id] >= (r.u || 0)));
+  };
+  const out = {};
+  const order = (c) => { const i = MUSCLE_GROUPS.findIndex(g => lc(g) === lc(c.name)); return i < 0 ? 99 : i; };
+  out.categories = mergeList(L.categories, R.categories).sort((a, b) => order(a) - order(b));
+  out.exercises = mergeList(L.exercises, R.exercises);
+  out.sets = mergeList(L.sets, R.sets).sort((a, b) => a.t - b.t);
+  out.workouts = mergeList(L.workouts, R.workouts).sort((a, b) => a.start - b.start);
+  out.chat = mergeList(L.chat, R.chat).sort((a, b) => (a.t || 0) - (b.t || 0));
+  out.groceryItems = mergeList(L.grocery.items, R.grocery.items);
+  const meals = (D) => Object.entries(D.diet.days || {}).flatMap(([day, d]) => (d.meals || []).map(m => ({ ...m, _day: day })));
+  const days = {};
+  for (const m of mergeList(meals(L), meals(R))) { const d = m._day; delete m._day; (days[d] ||= { meals: [] }).meals.push(m); }
+  out.days = days;
+  out.deleted = deleted;
+  out.su = { ...(L.su || {}) }; out.scalars = {};
+  const rVal = { weightUnit: R.settings?.weightUnit, dateFormat: R.settings?.dateFormat, groceryDays: R.grocery?.days };
+  for (const k in SCALARS) {
+    const lu = (L.su || {})[k] || 0, ru = (R.su || {})[k] || 0;
+    if (ru > lu && rVal[k] !== undefined) { out.scalars[k] = rVal[k]; out.su[k] = ru; }
+  }
+  out.libVersion = Math.max(L.libVersion || 1, R.libVersion || 1);
+  return out;
+}
+// Merge the backup into this device. Returns true if anything on this device changed.
+function applyMerge(R) {
+  stampChanges();
+  const before = JSON.stringify([S.categories, S.exercises, S.sets, S.workouts, S.chat, S.grocery, S.diet, S.settings.weightUnit, S.settings.dateFormat]);
+  const M = mergeData(S, R);
+  S.categories = M.categories; S.exercises = M.exercises; S.sets = M.sets; S.workouts = M.workouts; S.chat = M.chat;
+  S.grocery.items = M.groceryItems; S.diet.days = M.days; S.deleted = M.deleted; S.su = M.su; S.libVersion = M.libVersion;
+  for (const k in M.scalars) SCALARS[k][1](M.scalars[k]);
+  const aw = activeWorkout(); if (S.activeWorkoutId && (!aw || aw.end)) S.activeWorkoutId = null;
+  rebuildSnap();
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
+  return before !== JSON.stringify([S.categories, S.exercises, S.sets, S.workouts, S.chat, S.grocery, S.diet, S.settings.weightUnit, S.settings.dateFormat]);
+}
+function refreshAfterSync() {
+  // Don't redraw while the user is typing in a field or has a window open; closing it redraws anyway.
+  const a = document.activeElement;
+  if (sheetRender || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) return;
+  render();
 }
 
 // v2: 15 muscle groups + exercise library from the guide. Keeps all logged sets and custom groups/exercises.
@@ -568,6 +677,7 @@ let saveTimer = null;
 function save(now = false) {
   clearTimeout(saveTimer);
   const doSave = () => {
+    stampChanges();
     try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); }
     catch (e) { toast('⚠️ Could not save — storage full? Export a backup in Settings.'); }
   };
@@ -581,7 +691,7 @@ let cloudTimer = null, cloudBusy = false, cloudDirty = false;
 const ghHeaders = () => ({ Authorization: `Bearer ${S.settings.gistToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' });
 function backupPayload() {
   const copy = JSON.parse(JSON.stringify(S));
-  copy.settings.apiKey = ''; copy.settings.keys = {}; copy.settings.gistToken = ''; copy.settings.spotify = { clientId: (S.settings.spotify || {}).clientId || '' }; delete copy.settings.cloudLinked; // never upload secrets
+  copy.settings.apiKey = ''; copy.settings.keys = {}; copy.settings.gistToken = ''; copy.settings.spotify = { clientId: (S.settings.spotify || {}).clientId || '' }; delete copy.settings.cloudLinked; delete copy.settings.lastCloudBackup; delete copy.settings.lastExport; copy.activeWorkoutId = null; // never upload secrets or device-only state
   return JSON.stringify(copy);
 }
 function scheduleCloudBackup(delay = 15000) {
@@ -589,46 +699,55 @@ function scheduleCloudBackup(delay = 15000) {
   cloudDirty = true; clearTimeout(cloudTimer); cloudTimer = setTimeout(() => cloudBackup(), delay);
 }
 async function findGist() {
-  const res = await fetch('https://api.github.com/gists?per_page=100', { headers: ghHeaders() });
+  const res = await fetch('https://api.github.com/gists?per_page=100', { headers: ghHeaders(), cache: 'no-store' });
   if (!res.ok) throw new Error(res.status === 401 ? 'GitHub token is invalid or expired' : `GitHub error ${res.status}`);
   const list = await res.json();
   return list.find(g => g.files && g.files[GIST_FILE]) || null;
 }
+// Two-way sync: download the backup, merge it with this device, upload the merged result.
+let lastSyncAt = 0;
 async function cloudBackup(manual = false) {
   const st = S.settings;
-  if (!st.gistToken || !st.cloudLinked || cloudBusy || !navigator.onLine) return false; // never overwrite before restore/confirm
-  cloudBusy = true; cloudDirty = false;
+  if (!st.gistToken || !st.cloudLinked || cloudBusy || !navigator.onLine) return false; // never upload before restore/confirm
+  cloudBusy = true; cloudDirty = false; clearTimeout(cloudTimer);
   try {
-    if (!st.gistId) { const g = await findGist(); if (g) st.gistId = g.id; }
-    const body = JSON.stringify({ description: GIST_DESC, files: { [GIST_FILE]: { content: backupPayload() } } });
-    let res = st.gistId
-      ? await fetch(`https://api.github.com/gists/${st.gistId}`, { method: 'PATCH', headers: ghHeaders(), body })
-      : await fetch('https://api.github.com/gists', { method: 'POST', headers: ghHeaders(), body: JSON.stringify({ ...JSON.parse(body), public: false }) });
-    if (res.status === 404 && st.gistId) { st.gistId = ''; cloudBusy = false; return cloudBackup(manual); }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(res.status === 401 ? 'GitHub token is invalid or expired' : (data.message || `GitHub error ${res.status}`));
-    st.gistId = data.id; st.lastCloudBackup = Date.now();
+    const remote = await fetchBackup(st.gistId || null);
+    let changed = false;
+    if (remote) { st.gistId = remote.gist.id; changed = applyMerge(remote.data); } else { stampChanges(); }
+    const payload = backupPayload();
+    if (!remote || remote.text !== payload) {
+      const body = JSON.stringify({ description: GIST_DESC, files: { [GIST_FILE]: { content: payload } } });
+      let res = st.gistId
+        ? await fetch(`https://api.github.com/gists/${st.gistId}`, { method: 'PATCH', headers: ghHeaders(), body })
+        : await fetch('https://api.github.com/gists', { method: 'POST', headers: ghHeaders(), body: JSON.stringify({ ...JSON.parse(body), public: false }) });
+      if (res.status === 404 && st.gistId) { st.gistId = ''; cloudBusy = false; return cloudBackup(manual); }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(res.status === 401 ? 'GitHub token is invalid or expired' : (data.message || `GitHub error ${res.status}`));
+      st.gistId = data.id || st.gistId;
+    }
+    st.lastCloudBackup = lastSyncAt = Date.now();
     localStorage.setItem(STORE_KEY, JSON.stringify(S));
-    if (manual) toast('☁️ Backed up to GitHub ✓');
+    if (changed) refreshAfterSync();
+    if (manual) toast(changed ? '🔄 Synced — new data from your other device ✓' : '🔄 Synced ✓');
     const el = $('#cloudStatus'); if (el) el.innerHTML = cloudStatusHtml();
     return true;
   } catch (e) {
-    if (manual) toast('⚠️ Backup failed: ' + e.message, false, 5000);
+    if (manual) toast('⚠️ Sync failed: ' + e.message, false, 5000);
     cloudDirty = true; return false;
   } finally { cloudBusy = false; }
 }
 async function fetchBackup(id) {
   const g = id ? { id } : await findGist();
   if (!g) return null;
-  const res = await fetch(`https://api.github.com/gists/${g.id}`, { headers: ghHeaders() });
+  const res = await fetch(`https://api.github.com/gists/${g.id}`, { headers: ghHeaders(), cache: 'no-store' });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(res.status === 401 ? 'GitHub token is invalid or expired' : `GitHub error ${res.status}`);
   const gist = await res.json(); const f = gist.files[GIST_FILE]; if (!f) return null;
-  const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+  const text = f.truncated ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content;
   const data = JSON.parse(text);
   if (!data.exercises || !data.sets) throw new Error('Backup file is not valid');
   const wd = new Date(gist.updated_at);
-  return { gist, data, when: `${fmtDate(dayKey(wd))} ${pad(wd.getHours())}:${pad(wd.getMinutes())}` };
+  return { gist, data, text, when: `${fmtDate(dayKey(wd))} ${pad(wd.getHours())}:${pad(wd.getMinutes())}` };
 }
 function applyBackup(b) {
   const st = S.settings;
@@ -642,7 +761,7 @@ async function cloudRestore() {
   try {
     const b = await fetchBackup(st.gistId);
     if (!b) { toast('No Lift backup found on this GitHub account'); return; }
-    if (!confirm(`Restore backup from ${b.when}? This replaces the data on this phone.`)) return;
+    if (!confirm(`Replace everything on this device with the backup from ${b.when}? Anything that's only on this device will be lost.`)) return;
     applyBackup(b);
   } catch (e) { toast('⚠️ Restore failed: ' + e.message, false, 5000); }
 }
@@ -666,26 +785,28 @@ function backupFoundSheet() {
     <div class="grid3" style="margin-bottom:12px"><div class="stat"><div class="l">Sets</div><div class="v">${d.sets.length}</div></div>
       <div class="stat"><div class="l">Workouts</div><div class="v">${(d.workouts || []).filter(w => w.end).length}</div></div>
       <div class="stat"><div class="l">Diet days</div><div class="v">${days}</div></div></div>
-    <button class="btn primary block" data-act="cloudUseBackup">⬇ Load this backup onto this device</button>
-    <p class="tiny muted" style="margin:6px 2px 14px">Recommended on a new phone. Replaces what's on this device (${here.sets} sets, ${here.workouts} workouts) with the backup. Automatic backups then continue from here.</p>
-    <button class="btn danger block" data-act="cloudOverwrite">Keep this device's data and overwrite the backup</button>
-    <p class="tiny muted" style="margin:6px 2px 14px">Only if this device has your newest data. The backup above will be replaced.</p>
-    <button class="btn ghost block" data-act="cloudDecideLater">Decide later (backups stay paused)</button>`;
+    <button class="btn primary block" data-act="cloudSyncLink">🔄 Sync this device with it</button>
+    <p class="tiny muted" style="margin:6px 2px 14px">Recommended. Combines the backup with what's on this device (${here.sets} sets, ${here.workouts} workouts) — nothing from either side is lost. From then on, both stay in sync.</p>
+    <button class="btn block" data-act="cloudUseBackup">Replace this device's data with the backup</button>
+    <p class="tiny muted" style="margin:6px 2px 14px">Throws away what's only on this device and uses the backup instead.</p>
+    <button class="btn ghost block" data-act="cloudDecideLater">Decide later (sync stays paused)</button>`;
 }
 function cloudStatusHtml() {
   const st = S.settings;
   if (!st.gistToken) return '<span class="muted">Off — paste a token to turn on automatic backups.</span>';
-  if (!st.cloudLinked) return '<span style="color:var(--accent2)">⏸ Paused</span> <span class="muted">· a backup already exists on GitHub.</span> <a href="#" class="link" data-act="cloudChoose">Load it or overwrite it</a>';
-  if (!st.lastCloudBackup) return '<span class="muted">On — first backup will happen shortly.</span>';
+  if (!st.cloudLinked) return '<span style="color:var(--accent2)">⏸ Paused</span> <span class="muted">· a backup already exists on GitHub.</span> <a href="#" class="link" data-act="cloudChoose">Choose what to do</a>';
+  if (!st.lastCloudBackup) return '<span class="muted">On — first sync will happen shortly.</span>';
   const mins = Math.round((Date.now() - st.lastCloudBackup) / 60000);
   const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.round(mins / 60)} h ago` : `${Math.round(mins / 1440)} days ago`;
-  return `<span style="color:var(--good)">✓ On</span> <span class="muted">· last backup ${ago}</span>`;
+  return `<span style="color:var(--good)">✓ Sync on</span> <span class="muted">· last synced ${ago}</span>`;
 }
 window.addEventListener('online', () => { if (cloudDirty) scheduleCloudBackup(2000); });
 window.addEventListener('pagehide', () => save(true));
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') { save(true); if (cloudDirty) { clearTimeout(cloudTimer); cloudBackup(); } }
+  else if (S.settings.cloudLinked && Date.now() - lastSyncAt > 30000) cloudBackup(); // pick up changes from other devices
 });
+setInterval(() => { if (document.visibilityState === 'visible' && S.settings.cloudLinked && Date.now() - lastSyncAt > 110000) cloudBackup(); }, 120000);
 
 /* ============================== UI state ============================== */
 const UI = {
@@ -1316,13 +1437,13 @@ function chatMsgHtml(m) {
 async function sendChat(text) {
   text = (text || '').trim(); if (!text || UI.aiBusy) return;
   if (!hasAI()) { toast('Add your AI key in Settings first'); UI.tab = 'settings'; render(); return; }
-  S.chat.push({ role: 'user', content: text }); save();
+  S.chat.push({ id: uid(), role: 'user', content: text, t: Date.now() }); save();
   UI.aiBusy = true; render();
   try {
     const reply = await aiCall({ system: COACH_SYSTEM, messages: S.chat.slice(-12) });
-    S.chat.push({ role: 'assistant', content: reply });
+    S.chat.push({ id: uid(), role: 'assistant', content: reply, t: Date.now() });
   } catch (e) {
-    S.chat.push({ role: 'assistant', content: `⚠️ ${e.message}` });
+    S.chat.push({ id: uid(), role: 'assistant', content: `⚠️ ${e.message}`, t: Date.now() });
   }
   UI.aiBusy = false; save(); render();
 }
@@ -1512,12 +1633,12 @@ function viewSettings() {
       <button class="btn xs ghost" data-act="testAi" data-id="${k}" ${UI.aiBusy || !(st.keys[k] || '').trim() ? 'disabled' : ''}>${UI.aiBusy && UI.aiTarget === k ? 'Testing…' : 'Test'}</button></div></div>`).join('')}
     </div>`;
   h += spotifySettingsHtml();
-  h += `<div class="card"><h3>☁️ Automatic backup</h3>
-    <p class="small muted" style="margin-top:0">Backs up all your data to a private Gist on your GitHub account a few seconds after every change. Your AI key and token are never uploaded. <b>On a new device:</b> paste the same token and Lift will offer to load your backup.</p>
+  h += `<div class="card"><h3>☁️ Sync &amp; backup</h3>
+    <p class="small muted" style="margin-top:0">Keeps all your devices in sync through a private Gist on your GitHub account: a few seconds after every change, when you open the app, and every couple of minutes. Paste the <b>same token on every device</b>. Your AI keys and token are never uploaded.</p>
     <p class="small" id="cloudStatus">${cloudStatusHtml()}</p>
     <label class="field"><span>GitHub token (gist access)</span><input type="password" autocomplete="off" value="${esc(st.gistToken)}" placeholder="ghp_…" data-in="setGist"></label>
     <p class="small muted" style="margin-top:0">Create one: <a href="https://github.com/settings/tokens/new?scopes=gist&description=Lift%20backup" target="_blank" rel="noopener" style="color:var(--blue)">github.com/settings/tokens/new</a> → set <b>Expiration: No expiration</b> → <b>Generate token</b> → copy it here.</p>
-    <div class="row wrap"><button class="btn sm primary" data-act="cloudNow">☁️ Back up now</button><button class="btn sm" data-act="cloudRestore">⬇ Restore from GitHub</button></div></div>`;
+    <div class="row wrap"><button class="btn sm primary" data-act="cloudNow">🔄 Sync now</button><button class="btn sm" data-act="cloudRestore">⬇ Replace with backup</button></div></div>`;
   h += `<div class="card"><h3>Manual backup file</h3><p class="small muted" style="margin-top:0">Optional extra copy you can save to Files/iCloud.</p>
     <div class="row wrap"><button class="btn sm" data-act="exportData">⬆ Export backup</button><label class="btn sm" style="cursor:pointer">⬇ Import backup<input type="file" accept=".json,application/json" data-in="importData" hidden></label></div>
     <p class="tiny muted" id="persistInfo" style="margin-bottom:0"></p></div>`;
@@ -1827,16 +1948,13 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     UI.aiBusy = false; UI.aiTarget = null; render();
   },
   cloudUseBackup() { const b = pendingBackup; pendingBackup = null; closeSheet(); if (b) applyBackup(b); },
-  async cloudOverwrite() {
-    if (!confirm('Replace the GitHub backup with the data on this device? The old backup will be lost.')) return;
-    pendingBackup = null; S.settings.cloudLinked = true; save(true); closeSheet(); await cloudBackup(true);
-  },
+  async cloudSyncLink() { pendingBackup = null; S.settings.cloudLinked = true; save(true); closeSheet(); toast('Syncing…'); await cloudBackup(true); render(); },
   cloudDecideLater() { pendingBackup = null; closeSheet(); toast('Backups paused until you choose'); },
   cloudChoose() { linkCloud(); },
   async cloudNow() {
     if (!S.settings.gistToken) { toast('Paste your GitHub token first'); return; }
     if (!S.settings.cloudLinked) { linkCloud(); return; }
-    toast('Backing up…'); await cloudBackup(true);
+    toast('Syncing…'); await cloudBackup(true);
   },
   cloudRestore() { cloudRestore(); },
   exportData() {
@@ -1848,7 +1966,7 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
   resetAll() {
     if (!confirm('Erase ALL workouts, diet and grocery data? This cannot be undone.')) return;
     if (!confirm('Really erase everything?')) return;
-    S = defaultState(); save(true); render(); toast('All data erased');
+    S = defaultState(); load2(); save(true); render(); toast('All data erased on this device');
   },
 };
 function newProduct(unit = 'g') { return { id: uid(), name: '', qty: '', unit, kcal: '', protein: '', carbs: '', fat: '', fiber: '', sugar: '' }; }
@@ -2131,7 +2249,7 @@ load();
 render();
 spHandleReturn();
 if (spConnected()) spRefresh();
-if (S.settings.gistToken && Date.now() - (S.settings.lastCloudBackup || 0) > 6 * 3600e3) scheduleCloudBackup(3000);
+if (S.settings.gistToken && S.settings.cloudLinked) setTimeout(() => cloudBackup(), 1500); // sync on open
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
