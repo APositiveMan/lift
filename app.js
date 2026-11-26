@@ -393,7 +393,7 @@ let cloudTimer = null, cloudBusy = false, cloudDirty = false;
 const ghHeaders = () => ({ Authorization: `Bearer ${S.settings.gistToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' });
 function backupPayload() {
   const copy = JSON.parse(JSON.stringify(S));
-  copy.settings.apiKey = ''; copy.settings.keys = {}; copy.settings.gistToken = ''; // never upload secrets
+  copy.settings.apiKey = ''; copy.settings.keys = {}; copy.settings.gistToken = ''; copy.settings.spotify = { clientId: (S.settings.spotify || {}).clientId || '' }; // never upload secrets
   return JSON.stringify(copy);
 }
 function scheduleCloudBackup(delay = 15000) {
@@ -443,7 +443,7 @@ async function cloudRestore() {
     if (!data.exercises || !data.sets) throw new Error('Backup file is not valid');
     const when = new Date(gist.updated_at).toLocaleString();
     if (!confirm(`Restore backup from ${when}? This replaces the data on this phone.`)) return;
-    const keep = { keys: st.keys, gistToken: st.gistToken };
+    const keep = { keys: st.keys, gistToken: st.gistToken, spotify: st.spotify };
     data.settings = Object.assign({}, data.settings, keep, { gistId: gist.id, lastCloudBackup: Date.now() });
     localStorage.setItem(STORE_KEY, JSON.stringify(data)); load(); render(); toast('Restored from GitHub ✓');
   } catch (e) { toast('⚠️ Restore failed: ' + e.message, false, 5000); }
@@ -543,6 +543,7 @@ function render() {
   const views = { train: viewTrain, progress: viewProgress, coach: viewCoach, food: viewFood, settings: viewSettings };
   v.innerHTML = views[UI.tab]();
   if (UI.tab === 'coach') { const c = $('#chatEnd'); if (c) c.scrollIntoView({ block: 'end' }); }
+  if (typeof NP !== 'undefined') updateSpotifyBtn();
 }
 function renderBanner() {
   const b = $('#workoutBanner'); const w = activeWorkout();
@@ -565,6 +566,7 @@ function viewTrain() {
   let h = '';
   if (!S.settings.gistToken && S.sets.length && Date.now() - (S.settings.lastExport || 0) > 7 * 864e5)
     h += `<div class="notice warn" data-act="goSettings" style="cursor:pointer">☁️ Your progress is only on this phone. <b>Turn on automatic backup</b> in Settings →</div>`;
+  if (spConnected()) { h += `<div id="np">${nowPlayingHtml()}</div>`; setTimeout(() => spRefreshIfStale(), 0); }
   if (!w) {
     h += `<button class="btn block start-btn" data-act="startWorkout">▶ Start workout</button>`;
     h += `<button class="btn block log-btn" data-act="logSetNoWorkout">＋ Log a set without workout</button>`;
@@ -1197,6 +1199,7 @@ function viewSettings() {
       <div class="spread" style="margin-top:6px"><a class="small" href="${v.keyUrl}" target="_blank" rel="noopener" style="color:var(--blue)">Get a key ↗</a>
       <button class="btn xs ghost" data-act="testAi" data-id="${k}" ${UI.aiBusy || !(st.keys[k] || '').trim() ? 'disabled' : ''}>${UI.aiBusy && UI.aiTarget === k ? 'Testing…' : 'Test'}</button></div></div>`).join('')}
     </div>`;
+  h += spotifySettingsHtml();
   h += `<div class="card"><h3>☁️ Automatic backup</h3>
     <p class="small muted" style="margin-top:0">Backs up all your data to a private Gist on your GitHub account a few seconds after every change. Your AI key and token are never uploaded.</p>
     <p class="small" id="cloudStatus">${cloudStatusHtml()}</p>
@@ -1565,7 +1568,7 @@ const I = {
         const data = JSON.parse(rd.result);
         if (!data.exercises || !data.sets) throw new Error('Not a Lift backup');
         if (!confirm('Replace all current data with this backup?')) return;
-        data.settings = Object.assign({}, data.settings, { keys: S.settings.keys, gistToken: S.settings.gistToken });
+        data.settings = Object.assign({}, data.settings, { keys: S.settings.keys, gistToken: S.settings.gistToken, spotify: S.settings.spotify });
         localStorage.setItem(STORE_KEY, JSON.stringify(data)); load(); render(); toast('Backup restored ✓');
       } catch (e) { toast('⚠️ Import failed: ' + e.message); }
     };
@@ -1601,19 +1604,178 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ============================== Spotify ============================== */
-$('#spotifyBtn').addEventListener('click', (e) => {
-  e.preventDefault();
+// Connects to the user's Spotify account (PKCE, no server) to show and control what's playing.
+const SP_SCOPES = 'user-read-currently-playing user-read-playback-state user-modify-playback-state';
+const sp = () => (S.settings.spotify ||= { clientId: '' });
+const spConnected = () => !!sp().refresh;
+const spRedirect = () => location.origin + location.pathname.replace(/index\.html$/, '');
+const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+let NP = { at: 0, data: null, busy: false, error: '' };
+
+async function spConnect() {
+  const id = (sp().clientId || '').trim();
+  if (!id) { toast('Paste your Spotify Client ID first'); return; }
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  const state = b64url(crypto.getRandomValues(new Uint8Array(12)));
+  localStorage.setItem('lift_sp_verifier', verifier); localStorage.setItem('lift_sp_state', state);
+  save(true);
+  location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({
+    response_type: 'code', client_id: id, scope: SP_SCOPES, redirect_uri: spRedirect(),
+    code_challenge_method: 'S256', code_challenge: challenge, state,
+  });
+}
+async function spToken(params) {
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: sp().clientId.trim(), ...params }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error_description || data.error || `Spotify error ${res.status}`);
+  const t = sp(); t.access = data.access_token; t.exp = Date.now() + (data.expires_in - 60) * 1000;
+  if (data.refresh_token) t.refresh = data.refresh_token;
+  save(true);
+}
+// Finish login: called with the URL Spotify sent us back to (?code=…&state=…)
+async function spFinish(urlStr) {
+  const u = new URL(urlStr); const code = u.searchParams.get('code'), err = u.searchParams.get('error'), state = u.searchParams.get('state');
+  if (err) throw new Error(err === 'access_denied' ? 'You cancelled the Spotify login' : err);
+  if (!code) throw new Error('That link has no Spotify code in it');
+  const verifier = localStorage.getItem('lift_sp_verifier');
+  if (!verifier || state !== localStorage.getItem('lift_sp_state')) throw new Error('NO_VERIFIER');
+  await spToken({ grant_type: 'authorization_code', code, redirect_uri: spRedirect(), code_verifier: verifier });
+  localStorage.removeItem('lift_sp_verifier'); localStorage.removeItem('lift_sp_state');
+}
+async function spApi(path, method = 'GET', body) {
+  const t = sp(); if (!t.refresh) throw new Error('Spotify not connected');
+  if (!t.access || Date.now() > (t.exp || 0)) await spToken({ grant_type: 'refresh_token', refresh_token: t.refresh });
+  let res = await fetch('https://api.spotify.com/v1' + path, { method, headers: { Authorization: `Bearer ${sp().access}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401) { await spToken({ grant_type: 'refresh_token', refresh_token: sp().refresh }); res = await fetch('https://api.spotify.com/v1' + path, { method, headers: { Authorization: `Bearer ${sp().access}` } }); }
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => null);
+  if (!res.ok) { const e = new Error(data?.error?.message || `Spotify error ${res.status}`); e.status = res.status; e.reason = data?.error?.reason; throw e; }
+  return data;
+}
+async function spRefresh() {
+  if (!spConnected() || NP.busy) return;
+  NP.busy = true;
+  try { NP.data = await spApi('/me/player/currently-playing'); NP.error = ''; }
+  catch (e) { NP.error = e.message; if (/invalid_grant|revoked/i.test(e.message)) { sp().refresh = ''; sp().access = ''; save(); } }
+  NP.at = Date.now(); NP.busy = false;
+  const el = $('#np'); if (el) el.innerHTML = nowPlayingHtml();
+  updateSpotifyBtn();
+}
+function spRefreshIfStale() { if (Date.now() - NP.at > 8000) spRefresh(); }
+setInterval(() => { if (document.visibilityState === 'visible' && spConnected() && (UI.tab === 'train' || activeWorkout())) spRefresh(); }, 10000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && spConnected()) spRefresh(); });
+
+function nowPlayingHtml() {
+  const d = NP.data; const item = d?.item;
+  if (!NP.at) return `<div class="np"><div class="np-art np-empty">♪</div><div class="np-txt"><div class="np-t muted">Checking Spotify…</div></div></div>`;
+  if (NP.error && !item) return `<div class="np"><div class="np-art np-empty">♪</div><div class="np-txt"><div class="np-t">Spotify</div><div class="np-a">⚠️ ${esc(NP.error)}</div></div><button class="np-b" data-act="spOpen">Open</button></div>`;
+  if (!item) return `<div class="np" data-act="spOpen" style="cursor:pointer"><div class="np-art np-empty">♪</div><div class="np-txt"><div class="np-t">Nothing playing</div><div class="np-a">Tap to open Spotify and pick your music</div></div><span class="np-b">▶</span></div>`;
+  const img = (item.album?.images || item.images || []).slice(-2)[0]?.url;
+  const who = (item.artists || []).map(a => a.name).join(', ') || item.show?.name || '';
+  const playing = d.is_playing;
+  const pct = item.duration_ms ? Math.min(100, (d.progress_ms / item.duration_ms) * 100) : 0;
+  return `<div class="np ${playing ? 'on' : ''}">
+    ${img ? `<img class="np-art" src="${esc(img)}" alt="">` : '<div class="np-art np-empty">♪</div>'}
+    <div class="np-txt" data-act="spOpen" style="cursor:pointer"><div class="np-t ellipsis">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ''}${esc(item.name)}</div><div class="np-a ellipsis">${esc(who)}</div>
+      <div class="np-bar"><span style="width:${pct.toFixed(1)}%"></span></div></div>
+    <button class="np-b" data-act="spCmd" data-id="previous" aria-label="Previous">⏮︎</button>
+    <button class="np-b big" data-act="spCmd" data-id="${playing ? 'pause' : 'play'}" aria-label="${playing ? 'Pause' : 'Play'}">${playing ? '⏸︎' : '▶︎'}</button>
+    <button class="np-b" data-act="spCmd" data-id="next" aria-label="Next">⏭︎</button></div>`;
+}
+function updateSpotifyBtn() {
+  const b = $('#spotifyBtn span'); if (!b) return;
+  b.textContent = !spConnected() ? 'Connect Spotify' : NP.data?.is_playing ? 'Playing' : 'Spotify';
+  $('#spotifyBtn').setAttribute('aria-label', spConnected() ? 'Open Spotify' : 'Connect Spotify');
+  $('#spotifyBtn').classList.toggle('playing', !!(spConnected() && NP.data?.is_playing));
+}
+async function spCommand(cmd) {
+  const map = { play: ['/me/player/play', 'PUT'], pause: ['/me/player/pause', 'PUT'], next: ['/me/player/next', 'POST'], previous: ['/me/player/previous', 'POST'] };
+  if (NP.data && (cmd === 'play' || cmd === 'pause')) { NP.data.is_playing = cmd === 'play'; const el = $('#np'); if (el) el.innerHTML = nowPlayingHtml(); }
+  try { await spApi(...map[cmd]); setTimeout(spRefresh, 600); }
+  catch (e) {
+    if (e.status === 404 || e.reason === 'NO_ACTIVE_DEVICE') { toast('Open Spotify and start playing once, then the buttons work'); openSpotifyApp(); }
+    else if (e.status === 403) toast('Play/pause/skip needs Spotify Premium');
+    else toast('⚠️ ' + e.message);
+    spRefresh();
+  }
+}
+function spotifySettingsHtml() {
+  const t = sp(); const conn = spConnected();
+  let h = `<div class="card" id="spCard"><h3>🎵 Spotify</h3>`;
+  if (conn) {
+    h += `<p class="small" style="margin-top:0"><span style="color:var(--good)">✓ Connected</span> <span class="muted">· the song playing shows on the Train screen with play/pause/skip.</span></p>
+      <button class="btn sm danger" data-act="spDisconnect">Disconnect</button>`;
+  } else {
+    h += `<p class="small muted" style="margin-top:0">Show what's playing and control it from Lift. Needs Spotify Premium and a free developer app (one-time, ~5 min):</p>
+      <ol class="small" style="padding-left:18px;margin:0 0 10px">
+        <li>Open <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener" style="color:var(--blue)">developer.spotify.com/dashboard</a> → <b>Create app</b>.</li>
+        <li>Any name/description. In <b>Redirect URIs</b> paste exactly:<div class="row" style="margin:6px 0"><span class="kbd" style="overflow-wrap:anywhere">${esc(spRedirect())}</span><button class="btn xs ghost" data-act="spCopyRedirect">Copy</button></div></li>
+        <li>Tick <b>Web API</b>, accept the terms → <b>Save</b>.</li>
+        <li>Open the app's <b>Settings</b>, copy the <b>Client ID</b> and paste it below.</li>
+      </ol>
+      <label class="field"><span>Client ID</span><input type="text" autocomplete="off" value="${esc(t.clientId || '')}" placeholder="32 letters and numbers" data-in="spClient"></label>
+      <button class="btn sm primary" data-act="spConnect">Connect Spotify</button>
+      <details style="margin-top:12px"><summary class="small muted">Login finished in Safari instead of Lift?</summary>
+        <p class="small muted">Copy the full address from Safari's address bar and paste it here:</p>
+        <input type="text" placeholder="https://…?code=…" id="spPaste"><button class="btn sm" style="margin-top:6px" data-act="spPasteFinish">Finish connecting</button></details>`;
+  }
+  return h + `</div>`;
+}
+function openSpotifyApp() {
   const started = Date.now();
   window.location.href = 'spotify:';
-  setTimeout(() => {
-    // If the app didn't open (page still visible), fall back to the web player.
-    if (document.visibilityState === 'visible' && Date.now() - started < 2500) window.open('https://open.spotify.com', '_blank');
-  }, 1600);
+  setTimeout(() => { if (document.visibilityState === 'visible' && Date.now() - started < 2500) window.open('https://open.spotify.com', '_blank'); }, 1600);
+}
+Object.assign(A, {
+  spConnect() { spConnect().catch(e => toast('⚠️ ' + e.message)); },
+  spDisconnect() { if (!confirm('Disconnect Spotify from Lift?')) return; const t = sp(); t.refresh = ''; t.access = ''; NP = { at: 0, data: null, busy: false, error: '' }; save(true); render(); updateSpotifyBtn(); },
+  spCmd(el) { spCommand(el.dataset.id); },
+  spOpen() { openSpotifyApp(); },
+  async spCopyRedirect() { try { await navigator.clipboard.writeText(spRedirect()); toast('Copied ✓'); } catch (e) { toast('Select the address and copy it'); } },
+  async spPasteFinish() {
+    const v = $('#spPaste').value.trim(); if (!v) return;
+    try { await spFinish(v); toast('Spotify connected ✓'); UI.tab = 'train'; render(); spRefresh(); }
+    catch (e) { toast('⚠️ ' + (e.message === 'NO_VERIFIER' ? 'Start again: tap Connect Spotify in this app first' : e.message), false, 5000); }
+  },
+});
+Object.assign(I, { spClient(el) { sp().clientId = el.value.trim(); save(); } });
+LIVE.add('spClient');
+// Handle the return from Spotify's login page
+async function spHandleReturn() {
+  const u = new URL(location.href);
+  if (!u.searchParams.has('code') && !u.searchParams.has('error')) return;
+  if (!u.searchParams.get('state')) return;
+  const here = location.href; history.replaceState(null, '', spRedirect());
+  try { await spFinish(here); toast('Spotify connected ✓'); UI.tab = 'train'; render(); spRefresh(); }
+  catch (e) {
+    if (e.message === 'NO_VERIFIER') {
+      openSheet(() => sheetHead('Almost done') + `<p>Spotify sent you back to Safari instead of the Lift app. Copy this link, open Lift from your Home Screen, go to <b>Settings → Spotify → "Login finished in Safari instead of Lift?"</b> and paste it there.</p>
+        <input type="text" readonly value="${esc(here)}" onclick="this.select()"><button class="btn primary block" style="margin-top:8px" data-act="spCopyReturn" data-url="${esc(here)}">Copy link</button>`);
+      A.spCopyReturn = async (el) => { try { await navigator.clipboard.writeText(el.dataset.url); toast('Copied ✓'); } catch (x) { toast('Select the text and copy it'); } };
+    } else toast('⚠️ Spotify: ' + e.message, false, 5000);
+  }
+}
+$('#spotifyBtn').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (!spConnected()) { // not connected yet: go to Settings → Spotify
+    if (sheetRender) closeSheet();
+    UI.tab = 'settings'; render();
+    const card = $('#spCard');
+    if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600); }
+    return;
+  }
+  openSpotifyApp();
 });
 
 /* ============================== Boot ============================== */
 load();
 render();
+spHandleReturn();
+if (spConnected()) spRefresh();
 if (S.settings.gistToken && Date.now() - (S.settings.lastCloudBackup || 0) > 6 * 3600e3) scheduleCloudBackup(3000);
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
