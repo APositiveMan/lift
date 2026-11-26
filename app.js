@@ -1454,10 +1454,12 @@ const MEAL_TYPES = {
   lunch: { label: 'Lunch', emoji: '🍱', order: 3 },
   dinner: { label: 'Dinner', emoji: '🍽️', order: 5 },
   snack: { label: 'Snack', emoji: '🍎', order: 4 },
+  water: { label: 'Water', emoji: '💧', order: 5.4 },
+  drink: { label: 'Other drinks', emoji: '🥤', order: 5.5 },
   vitamin: { label: 'Vitamins / supplements', emoji: '💊', order: 6 },
 };
 const UNITS = ['g', 'kg', 'mg', 'mcg', 'ml', 'l', 'fl oz', 'oz', 'lb', 'pcs', 'slice', 'cup', 'tbsp', 'tsp', 'scoop', 'serving', 'portion', 'handful', 'pinch', 'clove', 'can', 'jar', 'bottle', 'pack', 'bag', 'box', 'bunch', 'dozen', 'capsule', 'tablet', 'softgel', 'drop', 'IU'];
-const MACROS = [['kcal', 'kcal'], ['protein', 'Protein g'], ['carbs', 'Carbs g'], ['fat', 'Fat g'], ['fiber', 'Fiber g'], ['sugar', 'Sugar g']];
+const MACROS = [['kcal', 'kcal'], ['protein', 'Protein g'], ['carbs', 'Carbs g'], ['fat', 'Fat g'], ['fiber', 'Fiber g'], ['sugar', 'Sugar g'], ['caffeine', 'Caffeine mg']];
 const unitSelect = (val, attrs) => `<select ${attrs}>${UNITS.map(u => `<option ${u === val ? 'selected' : ''}>${u}</option>`).join('')}</select>`;
 
 function viewFood() {
@@ -1467,7 +1469,12 @@ function viewFood() {
 }
 
 const dietDay = (k, create = false) => { if (!S.diet.days[k] && create) S.diet.days[k] = { meals: [] }; return S.diet.days[k]; };
-const mealTotals = (meal) => { const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 }; for (const p of meal.products) for (const k in t) t[k] += num(p[k]); return t; };
+const mealTotals = (meal) => { const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, caffeine: 0 }; for (const p of meal.products) for (const k in t) t[k] += num(p[k]); return t; };
+const defaultUnit = (type) => type === 'vitamin' ? 'capsule' : (type === 'drink' || type === 'water') ? 'ml' : 'g';
+// Liquid amount in ml (only for volume units; others are ignored)
+const ML = { ml: 1, l: 1000, 'fl oz': 29.57, cup: 240, tbsp: 15, tsp: 5 };
+const toMl = (p) => ML[p.unit] ? num(p.qty) * ML[p.unit] : 0;
+const fmtMl = (ml) => ml >= 1000 ? `${fmtN(ml / 1000)} l` : `${Math.round(ml)} ml`;
 const sortMeals = (meals) => [...meals].sort((a, b) => (MEAL_TYPES[a.type].order - MEAL_TYPES[b.type].order) || (a.created - b.created));
 
 function viewDiet() {
@@ -1479,7 +1486,13 @@ function viewDiet() {
   const eaten = { kcal: 0, protein: 0, carbs: 0, fat: 0 }, plan = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
   for (const m of meals) { const t = mealTotals(m); for (const x in plan) { plan[x] += t[x]; if (m.eaten) eaten[x] += t[x]; } }
   h += `<div class="card"><div class="macro-bar">${[['kcal', 'kcal'], ['protein', 'Protein'], ['carbs', 'Carbs'], ['fat', 'Fat']].map(([x, l]) =>
-    `<div class="m"><div class="v">${Math.round(eaten[x])}</div><div class="l">${l}${x === 'kcal' ? '' : ' g'}</div><div class="p">of ${Math.round(plan[x])} planned</div></div>`).join('')}</div></div>`;
+    `<div class="m"><div class="v">${Math.round(eaten[x])}</div><div class="l">${l}${x === 'kcal' ? '' : ' g'}</div><div class="p">of ${Math.round(plan[x])} planned</div></div>`).join('')}</div>
+    <div class="macro-bar drinks-bar">${[['water', '💧 Water'], ['drink', '🥤 Other drinks']].map(([type, l]) => {
+      const ms = meals.filter(m => m.type === type); const planMl = ms.reduce((a, m) => a + m.products.reduce((b, p) => b + toMl(p), 0), 0);
+      const drunk = ms.filter(m => m.eaten).reduce((a, m) => a + m.products.reduce((b, p) => b + toMl(p), 0), 0);
+      return `<div class="m"><div class="v">${fmtMl(drunk)}</div><div class="l">${l}</div><div class="p">of ${fmtMl(planMl)} planned</div></div>`; }).join('')}
+      ${(() => { const cafPlan = meals.reduce((a, m) => a + mealTotals(m).caffeine, 0), caf = meals.filter(m => m.eaten).reduce((a, m) => a + mealTotals(m).caffeine, 0);
+        return `<div class="m"><div class="v">${Math.round(caf)} mg</div><div class="l">☕ Caffeine</div><div class="p">of ${Math.round(cafPlan)} mg planned</div></div>`; })()}</div></div>`;
 
   if (!meals.length) {
     const prevKey = Object.keys(S.diet.days).filter(d => d < k && S.diet.days[d].meals.length).sort().pop();
@@ -1510,7 +1523,7 @@ function mealSheet(mealId) {
       <label class="field"><span>Name</span><input type="text" value="${esc(m.name)}" placeholder="${MEAL_TYPES[m.type].label}" data-in="mealName" data-id="${m.id}"></label></div>
       <label class="row" style="margin-bottom:12px"><input type="checkbox" ${m.eaten ? 'checked' : ''} data-in="mealEaten" data-id="${m.id}"> <span>Eaten</span></label>`;
     h += `<div class="card" style="background:var(--card2)"><div class="macro-bar">${[['kcal', 'kcal'], ['protein', 'Protein g'], ['carbs', 'Carbs g'], ['fat', 'Fat g']].map(([x, l]) => `<div class="m"><div class="v" id="mt_${x}">${Math.round(t[x])}</div><div class="l">${l}</div></div>`).join('')}</div>
-      <div class="tiny muted" style="text-align:center;margin-top:6px" id="mt_extra">Fiber ${fmtN(t.fiber)} g · Sugar ${fmtN(t.sugar)} g</div></div>`;
+      <div class="tiny muted" style="text-align:center;margin-top:6px" id="mt_extra">Fiber ${fmtN(t.fiber)} g · Sugar ${fmtN(t.sugar)} g · Caffeine ${Math.round(t.caffeine)} mg</div></div>`;
     const busy = (id) => UI.aiBusy && UI.aiTarget === id;
     h += `<div class="row" style="margin:14px 0 8px"><h3 style="margin:0">Products</h3>
       ${m.products.length ? `<button class="btn xs ghost" style="white-space:nowrap" data-act="aiMacrosMeal" data-id="${m.id}" ${UI.aiBusy ? 'disabled' : ''}>${busy(m.id) ? 'Calculating…' : '🤖 Calculate all macros with AI'}</button>` : ''}</div>`;
@@ -1534,7 +1547,7 @@ function mealSheet(mealId) {
 function updateMealTotalsInSheet(m) {
   const t = mealTotals(m);
   for (const x of ['kcal', 'protein', 'carbs', 'fat']) { const el = $('#mt_' + x); if (el) el.textContent = Math.round(t[x]); }
-  const ex = $('#mt_extra'); if (ex) ex.textContent = `Fiber ${fmtN(t.fiber)} g · Sugar ${fmtN(t.sugar)} g`;
+  const ex = $('#mt_extra'); if (ex) ex.textContent = `Fiber ${fmtN(t.fiber)} g · Sugar ${fmtN(t.sugar)} g · Caffeine ${Math.round(t.caffeine)} mg`;
 }
 
 async function aiMacros(products, target = null) {
@@ -1544,10 +1557,10 @@ async function aiMacros(products, target = null) {
   if (!items.length) { toast('Type the product name first'); return; }
   UI.aiBusy = true; UI.aiTarget = target; renderSheet(); render();
   try {
-    const prompt = `Estimate nutrition for each food item for EXACTLY the stated amount. Use standard nutrition databases (USDA etc.). For supplements/vitamins, kcal and macros are usually 0 unless they contain calories.
+    const prompt = `Estimate nutrition for each food item for EXACTLY the stated amount. Use standard nutrition databases (USDA etc.). For supplements/vitamins, kcal and macros are usually 0 unless they contain calories. Caffeine is in milligrams (e.g. coffee, tea, cola, energy drinks, pre-workout, dark chocolate); use 0 when there is none.
 Items:
 ${items.map((it, i) => `${i}. ${it.desc}`).join('\n')}
-Reply with ONLY JSON: {"items":[{"i":0,"kcal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0}, ...]} — numbers only, grams for macros, one decimal max.`;
+Reply with ONLY JSON: {"items":[{"i":0,"kcal":0,"protein":0,"carbs":0,"fat":0,"fiber":0,"sugar":0,"caffeine":0}, ...]} — numbers only, grams for macros, milligrams for caffeine, one decimal max.`;
     const txt = await aiCall({ system: 'You are a precise nutrition calculator. Output only valid JSON.', messages: [{ role: 'user', content: prompt }], json: true });
     const data = parseJson(txt);
     let n = 0;
@@ -1885,11 +1898,13 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
   addMeal(el) {
     const day = dietDay(UI.dietDate, true);
     const m = { id: uid(), type: el.dataset.id, name: '', eaten: false, created: Date.now(), products: [] };
-    m.products.push(newProduct(el.dataset.id === 'vitamin' ? 'capsule' : 'g'));
+    const np = newProduct(defaultUnit(el.dataset.id));
+    if (el.dataset.id === 'water') Object.assign(np, { name: 'Water', qty: 250, kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, caffeine: 0 });
+    m.products.push(np);
     day.meals.push(m); save(); render(); openSheet(mealSheet(m.id));
   },
   openMeal(el) { openSheet(mealSheet(el.dataset.id)); },
-  addProduct(el) { const f = findMeal(el.dataset.id); f.meal.products.push(newProduct(f.meal.type === 'vitamin' ? 'capsule' : 'g')); save(); renderSheet(); },
+  addProduct(el) { const f = findMeal(el.dataset.id); f.meal.products.push(newProduct(defaultUnit(f.meal.type))); save(); renderSheet(); },
   delProduct(el) { const f = findMeal(el.dataset.m); f.meal.products = f.meal.products.filter(p => p.id !== el.dataset.id); save(); renderSheet(); },
   deleteMeal(el) {
     const f = findMeal(el.dataset.id); if (!f || !confirm('Delete this meal?')) return;
@@ -1969,7 +1984,7 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     S = defaultState(); load2(); save(true); render(); toast('All data erased on this device');
   },
 };
-function newProduct(unit = 'g') { return { id: uid(), name: '', qty: '', unit, kcal: '', protein: '', carbs: '', fat: '', fiber: '', sugar: '' }; }
+function newProduct(unit = 'g') { return { id: uid(), name: '', qty: '', unit, kcal: '', protein: '', carbs: '', fat: '', fiber: '', sugar: '', caffeine: '' }; }
 
 /* ============================== Inputs ============================== */
 const I = {

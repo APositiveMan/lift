@@ -322,3 +322,5 @@ a.link { color: var(--blue); text-decoration: underline; text-underline-offset: 
 .ex-trend div { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; position: relative; }
 .ex-trend span { display: block; font-size: 11px; color: var(--muted); } .ex-trend b { font-size: 16px; }
 .ex-trend .up { position: absolute; top: 6px; right: 8px; font-style: normal; font-size: 10px; color: var(--good); }
+
+.drinks-bar { grid-template-columns: repeat(3, 1fr); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
