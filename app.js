@@ -32,24 +32,289 @@ const deltaHtml = (now, before, unit = '') => {
   return `<span class="${d > 0 ? 'delta-up' : 'delta-down'}">${d > 0 ? '▲' : '▼'} ${fmtN(Math.abs(d))}${unit}${p !== null ? ` (${p > 0 ? '+' : ''}${p}%)` : ''}</span>`;
 };
 
+/* ============================== Exercise library ============================== */
+const MUSCLE_GROUPS = ["Chest", "Back", "Traps", "Shoulders", "Biceps", "Triceps", "Forearms", "Abs", "Obliques", "Lower Back", "Glutes", "Quads", "Hamstrings", "Thighs", "Calves"];
+// From the exercise guide PDF: [name, 'Group,Group']
+const EXERCISE_LIBRARY = [
+["Barbell Bench Press", "Chest"],
+["Incline Barbell Bench Press", "Chest,Shoulders"],
+["Decline Barbell Bench Press", "Chest"],
+["Dumbbell Chest Press", "Chest"],
+["Incline Dumbbell Chest Press", "Chest,Shoulders"],
+["Dumbbell Chest Fly", "Chest"],
+["Incline Dumbbell Fly", "Chest"],
+["Cable Chest Fly", "Chest"],
+["Cable Crossover", "Chest"],
+["Cable Chest Press", "Chest"],
+["Machine Chest Press", "Chest"],
+["Incline Chest Press Machine", "Chest,Shoulders"],
+["Pec Deck", "Chest"],
+["Smith Machine Bench Press", "Chest"],
+["Push-Up", "Chest,Triceps"],
+["Incline Push-Up", "Chest"],
+["Decline Push-Up", "Chest,Shoulders"],
+["Diamond Push-Up", "Triceps,Chest"],
+["Archer Push-Up", "Chest"],
+["Chest Dip", "Chest,Triceps"],
+["Pull-Up", "Back,Biceps"],
+["Chin-Up", "Back,Biceps"],
+["Lat Pulldown", "Back"],
+["Straight-Arm Pulldown", "Back"],
+["Barbell Bent-Over Row", "Back"],
+["Pendlay Row", "Back"],
+["T-Bar Row", "Back"],
+["Landmine Row", "Back"],
+["Single-Arm Dumbbell Row", "Back"],
+["Chest-Supported Row", "Back"],
+["Seated Cable Row", "Back"],
+["Single-Arm Cable Row", "Back"],
+["Machine Row", "Back"],
+["Inverted Row", "Back,Biceps"],
+["Renegade Row", "Back,Abs"],
+["Dumbbell Pullover", "Back,Chest"],
+["Deadlift", "Back,Lower Back,Glutes,Hamstrings"],
+["Rack Pull", "Back,Traps,Lower Back"],
+["Back Extension", "Lower Back,Glutes"],
+["Reverse Hyperextension", "Lower Back,Glutes,Hamstrings"],
+["Standing Overhead Press", "Shoulders,Triceps"],
+["Seated Dumbbell Shoulder Press", "Shoulders"],
+["Arnold Press", "Shoulders"],
+["Machine Shoulder Press", "Shoulders"],
+["Push Press", "Shoulders,Triceps"],
+["Landmine Shoulder Press", "Shoulders"],
+["Dumbbell Front Raise", "Shoulders"],
+["Dumbbell Lateral Raise", "Shoulders"],
+["Cable Lateral Raise", "Shoulders"],
+["Machine Lateral Raise", "Shoulders"],
+["Bent-Over Reverse Fly", "Shoulders,Back"],
+["Reverse Pec Deck", "Shoulders,Back"],
+["Cable Rear-Delt Fly", "Shoulders"],
+["Face Pull", "Shoulders,Traps"],
+["Upright Row", "Shoulders,Traps"],
+["Barbell Shrug", "Traps"],
+["Dumbbell Shrug", "Traps"],
+["Farmer's Carry", "Traps,Forearms"],
+["Prone Y-Raise", "Traps,Shoulders"],
+["Scapular Pull-Up", "Back,Traps"],
+["Barbell Curl", "Biceps"],
+["EZ-Bar Curl", "Biceps"],
+["Dumbbell Curl", "Biceps"],
+["Alternating Dumbbell Curl", "Biceps"],
+["Hammer Curl", "Biceps,Forearms"],
+["Cross-Body Hammer Curl", "Biceps,Forearms"],
+["Incline Dumbbell Curl", "Biceps"],
+["Concentration Curl", "Biceps"],
+["Spider Curl", "Biceps"],
+["Preacher Curl", "Biceps"],
+["Cable Biceps Curl", "Biceps"],
+["Bayesian Cable Curl", "Biceps"],
+["Reverse Curl", "Forearms,Biceps"],
+["Zottman Curl", "Biceps,Forearms"],
+["Triceps Pushdown", "Triceps"],
+["Overhead Cable Triceps Extension", "Triceps"],
+["Dumbbell Overhead Triceps Extension", "Triceps"],
+["Skull Crusher", "Triceps"],
+["Lying Dumbbell Triceps Extension", "Triceps"],
+["Triceps Kickback", "Triceps"],
+["Close-Grip Bench Press", "Triceps,Chest"],
+["JM Press", "Triceps"],
+["Tate Press", "Triceps"],
+["Bench Dip", "Triceps"],
+["Parallel-Bar Dip", "Triceps,Chest"],
+["Bodyweight Triceps Extension", "Triceps"],
+["Wrist Curl", "Forearms"],
+["Reverse Wrist Curl", "Forearms"],
+["Wrist Roller", "Forearms"],
+["Farmer's Hold", "Forearms,Traps"],
+["Plate Pinch Hold", "Forearms"],
+["Dead Hang", "Forearms,Back"],
+["Towel Hang", "Forearms,Back"],
+["Hand Gripper Squeeze", "Forearms"],
+["Finger Extension", "Forearms"],
+["Wrist Pronation", "Forearms"],
+["Wrist Supination", "Forearms"],
+["Rope Climb", "Back,Biceps,Forearms"],
+["Back Squat", "Quads,Glutes"],
+["Front Squat", "Quads,Glutes"],
+["Zercher Squat", "Quads,Glutes"],
+["Safety-Bar Squat", "Quads,Glutes"],
+["Box Squat", "Quads,Glutes"],
+["Goblet Squat", "Quads,Glutes"],
+["Hack Squat", "Quads"],
+["Smith Machine Squat", "Quads,Glutes"],
+["Leg Press", "Quads,Glutes"],
+["Single-Leg Leg Press", "Quads,Glutes"],
+["Leg Extension", "Quads"],
+["Sissy Squat", "Quads"],
+["Spanish Squat", "Quads"],
+["Bulgarian Split Squat", "Quads,Glutes"],
+["Split Squat", "Quads,Glutes"],
+["Pistol Squat", "Quads,Glutes"],
+["Walking Lunge", "Quads,Glutes"],
+["Reverse Lunge", "Glutes,Quads"],
+["Forward Lunge", "Quads,Glutes"],
+["Lateral Lunge", "Quads,Glutes,Thighs"],
+["Step-Up", "Quads,Glutes"],
+["Cossack Squat", "Quads,Thighs,Glutes"],
+["Romanian Deadlift", "Hamstrings,Glutes,Lower Back"],
+["Stiff-Leg Deadlift", "Hamstrings,Glutes,Lower Back"],
+["Good Morning", "Hamstrings,Lower Back"],
+["Lying Leg Curl", "Hamstrings"],
+["Seated Leg Curl", "Hamstrings"],
+["Standing Leg Curl", "Hamstrings"],
+["Single-Leg Leg Curl", "Hamstrings"],
+["Nordic Hamstring Curl", "Hamstrings"],
+["Glute-Ham Raise", "Hamstrings,Glutes"],
+["Stability-Ball Leg Curl", "Hamstrings"],
+["Sliding Leg Curl", "Hamstrings"],
+["Cable Pull-Through", "Glutes,Hamstrings"],
+["Kettlebell Swing", "Glutes,Hamstrings"],
+["Single-Leg Romanian Deadlift", "Hamstrings,Glutes"],
+["Barbell Hip Thrust", "Glutes"],
+["Dumbbell Hip Thrust", "Glutes"],
+["Hip Thrust Machine", "Glutes"],
+["Glute Bridge", "Glutes"],
+["Single-Leg Glute Bridge", "Glutes"],
+["Frog Pump", "Glutes"],
+["Cable Glute Kickback", "Glutes"],
+["Glute Kickback Machine", "Glutes"],
+["Donkey Kick", "Glutes"],
+["Fire Hydrant", "Glutes,Thighs"],
+["Hip Abduction Machine", "Glutes,Thighs"],
+["Standing Cable Hip Abduction", "Glutes,Thighs"],
+["Clamshell", "Glutes"],
+["Lateral Band Walk", "Glutes"],
+["Monster Walk", "Glutes"],
+["Sumo Squat", "Glutes,Quads,Thighs"],
+["Sumo Deadlift", "Glutes,Hamstrings,Thighs,Back"],
+["45-Degree Hip Extension", "Glutes,Lower Back"],
+["Standing Calf Raise", "Calves"],
+["Seated Calf Raise", "Calves"],
+["Donkey Calf Raise", "Calves"],
+["Leg Press Calf Raise", "Calves"],
+["Single-Leg Calf Raise", "Calves"],
+["Tibialis Raise", "Calves"],
+["Toe Raises", "Calves"],
+["Ankle Inversion", "Calves"],
+["Ankle Eversion", "Calves"],
+["Pogo Jumps", "Calves"],
+["Crunch", "Abs"],
+["Weighted Crunch", "Abs"],
+["Cable Crunch", "Abs"],
+["Machine Abdominal Crunch", "Abs"],
+["Sit-Up", "Abs"],
+["Decline Sit-Up", "Abs"],
+["Reverse Crunch", "Abs"],
+["V-Up", "Abs"],
+["Hanging Knee Raise", "Abs"],
+["Hanging Leg Raise", "Abs"],
+["Captain's Chair Knee Raise", "Abs"],
+["Toes-To-Bar", "Abs"],
+["Russian Twist", "Obliques,Abs"],
+["Bicycle Crunch", "Abs,Obliques"],
+["Cable Woodchopper", "Obliques"],
+["Plank", "Abs"],
+["Side Plank", "Obliques"],
+["Reverse Plank", "Lower Back,Glutes"],
+["Copenhagen Plank", "Thighs,Obliques"],
+["Ab Wheel Rollout", "Abs"],
+["Dead Bug", "Abs"],
+["Bird Dog", "Lower Back,Abs"],
+["Hollow-Body Hold", "Abs"],
+["Pallof Press", "Obliques,Abs"],
+["Suitcase Carry", "Obliques,Forearms"],
+["Turkish Get-Up", "Abs,Shoulders"],
+["Seated Hip Adduction", "Thighs"],
+["Standing Cable Hip Adduction", "Thighs"],
+["Ball Squeeze", "Thighs"],
+["Seated Hip Abduction", "Thighs,Glutes"],
+["Side-Lying Hip Abduction", "Thighs,Glutes"],
+["Banded Clamshell", "Glutes,Thighs"],
+["Hip Airplane", "Glutes,Thighs"],
+["Cable External Rotation", "Shoulders"],
+["Cable Internal Rotation", "Shoulders"],
+["Dumbbell External Rotation", "Shoulders"],
+["Band External Rotation", "Shoulders"],
+["Band Internal Rotation", "Shoulders"],
+["90/90 External Rotation", "Shoulders"],
+["Cuban Rotation", "Shoulders"],
+["Full-Can Raise", "Shoulders"],
+["Scaption Raise", "Shoulders"],
+["Serratus Wall Slide", "Shoulders"],
+["Wall Angel", "Shoulders,Traps"],
+["Neck Flexion", "Traps"],
+["Neck Extension", "Traps"],
+["Neck Lateral Flexion", "Traps"],
+["Neck Rotation", "Traps"],
+["Neck Isometric Hold", "Traps"],
+["Snatch", "Shoulders,Traps,Quads,Glutes"],
+["Power Snatch", "Shoulders,Traps,Quads,Glutes"],
+["Hang Snatch", "Shoulders,Traps,Quads,Glutes"],
+["Clean", "Traps,Quads,Glutes,Hamstrings"],
+["Power Clean", "Traps,Quads,Glutes,Hamstrings"],
+["Hang Clean", "Traps,Quads,Glutes,Hamstrings"],
+["Clean Pull", "Traps,Hamstrings,Glutes"],
+["Snatch Pull", "Traps,Hamstrings,Glutes"],
+["Clean and Jerk", "Shoulders,Quads,Glutes,Traps"],
+["Split Jerk", "Shoulders,Quads,Triceps"],
+["Push Jerk", "Shoulders,Quads,Triceps"],
+["Thruster", "Quads,Shoulders,Glutes"],
+["High Pull", "Traps,Shoulders"],
+["Medicine-Ball Slam", "Abs,Shoulders,Back"],
+["Medicine-Ball Rotational Throw", "Obliques"],
+["Box Jump", "Quads,Glutes,Calves"],
+["Broad Jump", "Quads,Glutes,Calves"],
+["Depth Jump", "Quads,Glutes,Calves"],
+["Squat Jump", "Quads,Glutes,Calves"],
+["Jump Lunge", "Quads,Glutes"],
+["Kettlebell Deadlift", "Glutes,Hamstrings"],
+["Kettlebell Goblet Squat", "Quads,Glutes"],
+["Kettlebell Front Squat", "Quads,Glutes"],
+["Kettlebell Overhead Squat", "Quads,Shoulders,Glutes"],
+["Kettlebell Clean", "Glutes,Hamstrings,Shoulders"],
+["Kettlebell Press", "Shoulders,Triceps"],
+["Kettlebell Clean and Press", "Shoulders,Glutes"],
+["Kettlebell Snatch", "Shoulders,Glutes,Hamstrings"],
+["Kettlebell Row", "Back"],
+["Kettlebell Halo", "Shoulders,Abs"],
+["Kettlebell Windmill", "Obliques,Shoulders"],
+["Kettlebell Farmer's Carry", "Forearms,Traps"],
+["Kettlebell Suitcase Carry", "Obliques,Forearms"],
+["Kettlebell Figure-Eight", "Abs,Forearms"],
+["Muscle-Up", "Back,Chest,Triceps"],
+["Handstand", "Shoulders,Abs"],
+["Handstand Push-Up", "Shoulders,Triceps"],
+["Pike Push-Up", "Shoulders,Triceps"],
+["One-Arm Push-Up", "Chest,Triceps,Abs"],
+["One-Arm Pull-Up", "Back,Biceps"],
+["Shrimp Squat", "Quads,Glutes"],
+["L-Sit", "Abs"],
+["V-Sit", "Abs"],
+["Front Lever", "Back,Abs"],
+["Back Lever", "Back,Shoulders"],
+["Human Flag", "Obliques,Shoulders,Back"],
+["Planche", "Shoulders,Chest,Abs"],
+["Skin the Cat", "Back,Shoulders"],
+["Bear Crawl", "Shoulders,Abs,Quads"],
+["Crab Walk", "Triceps,Glutes,Shoulders"],
+["Burpee", "Chest,Quads"],
+["Mountain Climber", "Abs"],
+["Jumping Jack", "Calves,Shoulders"],
+["Skater Jump", "Glutes,Quads"],
+["Tuck Jump", "Quads,Calves,Abs"]
+];
+
 /* ============================== Store ============================== */
 const STORE_KEY = 'lift_app_v1';
 
 function defaultState() {
-  const cats = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core'].map(name => ({ id: uid(), name }));
+  const cats = MUSCLE_GROUPS.map(name => ({ id: uid(), name }));
   const c = Object.fromEntries(cats.map(x => [x.name, x.id]));
-  const ex = (name, catNames) => ({ id: uid(), name, categoryIds: catNames.map(n => c[n]), notes: '' });
   return {
     version: 1,
+    libVersion: 2,
     categories: cats,
-    exercises: [
-      ex('Bench Press', ['Chest']), ex('Incline Dumbbell Press', ['Chest', 'Shoulders']),
-      ex('Pull-up', ['Back']), ex('Barbell Row', ['Back']),
-      ex('Squat', ['Legs']), ex('Romanian Deadlift', ['Legs', 'Back']),
-      ex('Overhead Press', ['Shoulders']), ex('Lateral Raise', ['Shoulders']),
-      ex('Barbell Curl', ['Arms']), ex('Triceps Pushdown', ['Arms']),
-      ex('Plank', ['Core']),
-    ],
+    exercises: EXERCISE_LIBRARY.map(([name, groups]) => ({ id: uid(), name, categoryIds: groups.split(',').map(g => c[g]), notes: '' })),
     sets: [],
     workouts: [],
     activeWorkoutId: null,
@@ -67,6 +332,7 @@ function load() {
     S = raw ? JSON.parse(raw) : defaultState();
   } catch (e) { S = defaultState(); }
   const d = defaultState();
+  if (S.libVersion === undefined) S.libVersion = 1; // older data: migrate to the new muscle groups below
   for (const k of Object.keys(d)) if (S[k] === undefined) S[k] = d[k];
   S.settings = Object.assign({}, d.settings, S.settings);
   const st0 = S.settings; st0.keys = st0.keys || {}; st0.models = st0.models || {};
@@ -74,6 +340,41 @@ function load() {
   st0.apiKey = ''; st0.model = '';
   S.diet = S.diet || { days: {} }; S.diet.days = S.diet.days || {};
   S.grocery = Object.assign({ days: 7, items: [] }, S.grocery);
+  migrateMuscleGroups();
+}
+
+// v2: 15 muscle groups + exercise library from the guide. Keeps all logged sets and custom groups/exercises.
+function migrateMuscleGroups() {
+  if ((S.libVersion || 1) >= 2) return;
+  const lc = (x) => x.trim().toLowerCase();
+  const byName = (n) => S.categories.find(c => lc(c.name) === lc(n));
+  for (const g of MUSCLE_GROUPS) if (!byName(g)) S.categories.push({ id: uid(), name: g });
+  const gid = (n) => byName(n).id;
+  const OLD = { legs: ['Quads', 'Hamstrings', 'Glutes'], arms: ['Biceps', 'Triceps'], core: ['Abs', 'Obliques'] };
+  const FALLBACK = { legs: 'Quads', arms: 'Biceps', core: 'Abs' };
+  const oldIds = {}; for (const c of S.categories) if (OLD[lc(c.name)]) oldIds[c.id] = lc(c.name);
+  const std = new Set(MUSCLE_GROUPS.map(g => gid(g)));
+  const ALIAS = { 'bench press': 'barbell bench press', 'incline dumbbell press': 'incline dumbbell chest press', 'barbell row': 'barbell bent-over row',
+    'squat': 'back squat', 'overhead press': 'standing overhead press', 'lateral raise': 'dumbbell lateral raise' };
+  const libMap = new Map(EXERCISE_LIBRARY.map(([n, g]) => [lc(n), g]));
+  const covered = new Set();
+  for (const e of S.exercises) {
+    const key = lc(e.name); const libKey = libMap.has(key) ? key : ALIAS[key];
+    const custom = e.categoryIds.filter(id => !std.has(id) && !oldIds[id]);
+    if (libKey && libMap.has(libKey)) {
+      covered.add(libKey);
+      e.categoryIds = [...new Set([...libMap.get(libKey).split(',').map(gid), ...custom])];
+    } else {
+      e.categoryIds = [...new Set(e.categoryIds.map(id => oldIds[id] ? gid(FALLBACK[oldIds[id]]) : id))];
+    }
+  }
+  for (const [n, g] of EXERCISE_LIBRARY) if (!covered.has(lc(n))) S.exercises.push({ id: uid(), name: n, categoryIds: g.split(',').map(gid), notes: '' });
+  for (const w of S.workouts) w.categoryIds = [...new Set(w.categoryIds.flatMap(id => oldIds[id] ? OLD[oldIds[id]].map(gid) : [id]))];
+  S.categories = S.categories.filter(c => !oldIds[c.id]);
+  const order = (c) => { const i = MUSCLE_GROUPS.findIndex(g => lc(g) === lc(c.name)); return i < 0 ? 99 : i; };
+  S.categories.sort((a, b) => order(a) - order(b));
+  S.libVersion = 2;
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
 }
 let saveTimer = null;
 function save(now = false) {
@@ -167,6 +468,8 @@ const UI = {
   foodSub: 'diet',
   dietDate: todayKey(),
   trainSearch: '',
+  trainCats: [],
+  logDate: null,
   progressEx: null,
   progressMetric: 'weight',
   aiBusy: false,
@@ -222,7 +525,7 @@ function renderSheet() {
   sh.scrollTop = st;
 }
 function closeSheet() {
-  sheetRender = null;
+  sheetRender = null; UI.logDate = null;
   $('#sheet').classList.add('hidden'); $('#sheetBackdrop').classList.add('hidden');
   $('#sheet').innerHTML = '';
   document.body.style.overflow = '';
@@ -284,6 +587,7 @@ function viewTrain() {
   // Exercises list
   h += `<div class="section-title"><h2>Exercises</h2><button class="btn sm" data-act="newExercise">+ Exercise</button></div>`;
   h += `<input type="text" placeholder="Search exercises…" value="${esc(UI.trainSearch)}" data-in="trainSearch" style="margin-bottom:10px">`;
+  h += filterChipsHtml(UI.trainCats, 'trainCat');
   h += `<div id="exList">${exerciseListHtml()}</div>`;
 
   // Workout history
@@ -302,7 +606,7 @@ function viewTrain() {
 
 function exerciseListHtml() {
   const q = UI.trainSearch.trim().toLowerCase();
-  const list = S.exercises.filter(e => !q || e.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name));
+  const list = S.exercises.filter(e => (!q || e.name.toLowerCase().includes(q)) && matchCats(e, UI.trainCats)).sort((a, b) => a.name.localeCompare(b.name));
   if (!list.length) return `<div class="empty"><div class="big">🏋️</div>No exercises found.</div>`;
   return list.map(e => {
     const rec = records(e.id);
@@ -346,7 +650,7 @@ function lastSessionBefore(exId, beforeT) {
 }
 
 function addSet(exId, weight, reps, notes = '', t = Date.now()) {
-  const w = activeWorkout();
+  const w = dayKey(t) === todayKey() ? activeWorkout() : null; // back-dated sets never join today's workout
   const s = { id: uid(), exerciseId: exId, t, weight: num(weight), reps: Math.round(num(reps)), notes, workoutId: w ? w.id : null };
   S.sets.push(s);
   if (w && !workoutExIds(w).includes(exId)) w.exerciseIds.push(exId);
@@ -377,7 +681,9 @@ function exerciseSheet(exId) {
     h += `<div class="card" style="background:var(--card2)"><h3>Add set</h3>
       <div class="grid2"><label class="field"><span>Weight (${wu()})</span><input type="text" inputmode="decimal" id="nsW" value="${last.weight ?? ''}"></label>
       <label class="field"><span>Reps</span><input type="text" inputmode="numeric" id="nsR" value="${last.reps ?? ''}"></label></div>
-      <label class="field"><span>Notes</span><input type="text" id="nsN" placeholder="optional"></label>
+      <div class="grid2"><label class="field"><span>Date</span><input type="date" id="nsD" value="${UI.logDate || todayKey()}" max="${todayKey()}" data-in="logDate"></label>
+      <label class="field"><span>Notes</span><input type="text" id="nsN" placeholder="optional"></label></div>
+      ${UI.logDate && UI.logDate !== todayKey() ? `<p class="tiny" style="color:var(--accent2);margin:-4px 0 8px">Logging for ${fmtDay(UI.logDate)}${activeWorkout() ? ' — saved to your history, not to the current workout' : ''}.</p>` : ''}
       <button class="btn primary block" data-act="sheetAddSet" data-id="${e.id}">+ Log set</button></div>`;
 
     h += `<div class="row" style="margin:6px 0 4px"><button class="btn sm" data-act="viewProgressFor" data-id="${e.id}">📈 Progress graph</button>
@@ -432,7 +738,7 @@ let pickerSearch = '';
 function exercisePickerSheet() {
   const w = activeWorkout(); if (!w) return sheetHead('Add exercise');
   const inW = workoutExIds(w); const q = pickerSearch.trim().toLowerCase();
-  const list = S.exercises.filter(e => !inW.includes(e.id) && (!q || e.name.toLowerCase().includes(q)));
+  const list = S.exercises.filter(e => !inW.includes(e.id) && (!q || e.name.toLowerCase().includes(q)) && matchCats(e, pickerCats)).sort((a, b) => a.name.localeCompare(b.name));
   const inGroup = (e) => e.categoryIds.some(c => w.categoryIds.includes(c));
   const row = (e) => `<div class="list-item" data-act="pickWorkoutEx" data-id="${e.id}"><div class="li-main"><div class="li-title">${esc(e.name)}</div>
     <div class="li-sub">${e.categoryIds.map(id => catById(id)?.name).filter(Boolean).map(c => `<span class="tag">${esc(c)}</span>`).join('') || '<span class="tag">No group</span>'}</div></div><span style="color:var(--accent);font-size:22px">+</span></div>`;
@@ -440,22 +746,35 @@ function exercisePickerSheet() {
   h += `<input type="text" id="pickSearch" placeholder="Search or type a new exercise…" value="${esc(pickerSearch)}" data-in="pickSearch" style="margin-bottom:10px">`;
   if (q && !S.exercises.some(e => e.name.toLowerCase() === q))
     h += `<button class="btn block" data-act="createWorkoutEx" style="margin-bottom:10px">＋ Create “${esc(pickerSearch.trim())}”</button>`;
+  h += filterChipsHtml(pickerCats, 'pickerCat');
   const a = list.filter(inGroup), b = list.filter(e => !inGroup(e));
   if (a.length) h += `<div class="date-head">${esc(catNames(w.categoryIds))}</div>` + a.map(row).join('');
   if (b.length) h += `<div class="date-head">Other exercises</div>` + b.map(row).join('');
-  if (!list.length && !q) h += `<p class="muted small">All your exercises are already in this workout. Type a name above to create a new one.</p>`;
+  if (!list.length) h += `<p class="muted small">No exercises match. Try another muscle group or type a new name above.</p>`;
   return h;
 }
+
+/* ---- Muscle-group filter chips (shared by pickers and the Train list) ---- */
+let pickerCats = [];
+function filterChipsHtml(selected, act) {
+  return `<div class="chips filter-chips"><button class="chip ${selected.length ? '' : 'on'}" data-act="${act}" data-id="">All</button>` +
+    S.categories.map(c => `<button class="chip ${selected.includes(c.id) ? 'on' : ''}" data-act="${act}" data-id="${c.id}">${esc(c.name)}</button>`).join('') + `</div>`;
+}
+const matchCats = (e, sel) => !sel.length || e.categoryIds.some(c => sel.includes(c));
+const toggleIn = (arr, id) => !id ? [] : arr.includes(id) ? arr.filter(x => x !== id) : [...arr, id];
 
 /* ---- Log a single set outside a workout: pick exercise, then its sheet opens ---- */
 function quickLogPickerSheet() {
   const q = pickerSearch.trim().toLowerCase();
-  const list = S.exercises.filter(e => !q || e.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name));
+  const list = S.exercises.filter(e => (!q || e.name.toLowerCase().includes(q)) && matchCats(e, pickerCats)).sort((a, b) => a.name.localeCompare(b.name));
   let h = sheetHead('Log a set');
   h += `<p class="muted small" style="margin-top:-6px">Pick the exercise — the set is saved to your history without starting a workout.</p>`;
   h += `<input type="text" id="pickSearch" placeholder="Search or type a new exercise…" value="${esc(pickerSearch)}" data-in="pickSearch" style="margin-bottom:10px">`;
   if (q && !S.exercises.some(e => e.name.toLowerCase() === q))
     h += `<button class="btn block" data-act="createQuickLogEx" style="margin-bottom:10px">＋ Create “${esc(pickerSearch.trim())}”</button>`;
+  h += filterChipsHtml(pickerCats, 'pickerCat');
+  h += `<div class="tiny muted" style="margin:0 2px 8px">${list.length} exercise${list.length === 1 ? '' : 's'}</div>`;
+  if (!list.length) h += `<p class="muted small">No exercises match. Try another muscle group or type a new name above.</p>`;
   h += list.map(e => `<div class="list-item" data-act="quickLogPick" data-id="${e.id}"><div class="li-main"><div class="li-title">${esc(e.name)}</div>
     <div class="li-sub">${e.categoryIds.map(id => catById(id)?.name).filter(Boolean).map(c => `<span class="tag">${esc(c)}</span>`).join('') || '<span class="tag">No group</span>'}</div></div><span class="chev">›</span></div>`).join('');
   return h;
@@ -1009,13 +1328,15 @@ const A = {
     w.end = Date.now(); S.activeWorkoutId = null; save(true); render();
     openSheet(summarySheet(w.id));
   },
-  logSetNoWorkout() { pickerSearch = ''; openSheet(quickLogPickerSheet); },
+  logSetNoWorkout() { pickerSearch = ''; pickerCats = []; openSheet(quickLogPickerSheet); },
+  pickerCat(el) { pickerCats = toggleIn(pickerCats, el.dataset.id); renderSheet(); },
+  trainCat(el) { UI.trainCats = toggleIn(UI.trainCats, el.dataset.id); render(); },
   quickLogPick(el) { openExerciseForLogging(el.dataset.id); },
   createQuickLogEx() {
     const name = pickerSearch.trim(); if (!name) return;
     const e = { id: uid(), name, categoryIds: [], notes: '' }; S.exercises.push(e); save(); openExerciseForLogging(e.id);
   },
-  addWorkoutEx() { pickerSearch = ''; openSheet(exercisePickerSheet); setTimeout(() => $('#pickSearch')?.focus(), 100); },
+  addWorkoutEx() { pickerSearch = ''; pickerCats = []; openSheet(exercisePickerSheet); setTimeout(() => $('#pickSearch')?.focus(), 100); },
   pickWorkoutEx(el) {
     const w = activeWorkout(); if (!w) return;
     workoutExIds(w).push(el.dataset.id); save(); closeSheet();
@@ -1090,9 +1411,11 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     addSet(id, w, r); render();
   },
   sheetAddSet(el) {
-    const w = $('#nsW').value, r = $('#nsR').value, n = $('#nsN').value.trim();
+    const w = $('#nsW').value, r = $('#nsR').value, n = $('#nsN').value.trim(), d = $('#nsD').value;
     if (!num(r)) { toast('Enter reps'); return; }
-    addSet(el.dataset.id, w, r, n); renderSheet();
+    let t = Date.now();
+    if (d && d !== todayKey()) { const x = keyToDate(d), now = new Date(); x.setHours(now.getHours(), now.getMinutes(), now.getSeconds()); t = x.getTime(); }
+    addSet(el.dataset.id, w, r, n, t); renderSheet();
   },
   editSet(el) { openSheet(setSheet(el.dataset.id)); },
   deleteSet(el) {
@@ -1209,6 +1532,7 @@ const I = {
     if (!el.value) return; const s = S.sets.find(x => x.id === el.dataset.id);
     const old = new Date(s.t); const d = keyToDate(el.value); d.setHours(old.getHours(), old.getMinutes(), old.getSeconds(), old.getMilliseconds()); s.t = d.getTime(); save();
   },
+  logDate(el) { UI.logDate = el.value || null; renderSheet(); },
   progressEx(el) { UI.progressEx = el.value; render(); },
   mealEaten(el) { const f = findMeal(el.dataset.id); f.meal.eaten = el.checked; save(); if (sheetRender) renderSheet(); render(); },
   mealType(el) { findMeal(el.dataset.id).meal.type = el.value; save(); renderSheet(); },
