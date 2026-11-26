@@ -69,8 +69,8 @@ const deltaHtml = (now, before, unit = '') => {
 };
 
 /* ============================== Exercise library ============================== */
-const MUSCLE_GROUPS = ["Chest", "Back", "Traps", "Shoulders", "Biceps", "Triceps", "Forearms", "Abs", "Obliques", "Lower Back", "Glutes", "Quads", "Hamstrings", "Thighs", "Calves"];
-// From the exercise guide PDF: [name, 'Group,Group']
+const MUSCLE_GROUPS = ["Chest", "Back", "Traps", "Shoulders", "Biceps", "Triceps", "Forearms", "Abs", "Obliques", "Lower Back", "Glutes", "Quads", "Hamstrings", "Thighs", "Calves", "Cardio"];
+// From the exercise guide and cardio list PDFs: [name, 'Group,Group']
 const EXERCISE_LIBRARY = [
 ["Barbell Bench Press", "Chest"],
 ["Incline Barbell Bench Press", "Chest,Shoulders"],
@@ -129,7 +129,7 @@ const EXERCISE_LIBRARY = [
 ["Upright Row", "Shoulders,Traps"],
 ["Barbell Shrug", "Traps"],
 ["Dumbbell Shrug", "Traps"],
-["Farmer's Carry", "Traps,Forearms"],
+["Farmer's Carry", "Traps,Forearms,Cardio"],
 ["Prone Y-Raise", "Traps,Shoulders"],
 ["Scapular Pull-Up", "Back,Traps"],
 ["Barbell Curl", "Biceps"],
@@ -190,7 +190,7 @@ const EXERCISE_LIBRARY = [
 ["Reverse Lunge", "Glutes,Quads"],
 ["Forward Lunge", "Quads,Glutes"],
 ["Lateral Lunge", "Quads,Glutes,Thighs"],
-["Step-Up", "Quads,Glutes"],
+["Step-Up", "Quads,Glutes,Cardio"],
 ["Cossack Squat", "Quads,Thighs,Glutes"],
 ["Romanian Deadlift", "Hamstrings,Glutes,Lower Back"],
 ["Stiff-Leg Deadlift", "Hamstrings,Glutes,Lower Back"],
@@ -299,10 +299,10 @@ const EXERCISE_LIBRARY = [
 ["Medicine-Ball Slam", "Abs,Shoulders,Back"],
 ["Medicine-Ball Rotational Throw", "Obliques"],
 ["Box Jump", "Quads,Glutes,Calves"],
-["Broad Jump", "Quads,Glutes,Calves"],
+["Broad Jump", "Quads,Glutes,Calves,Cardio"],
 ["Depth Jump", "Quads,Glutes,Calves"],
-["Squat Jump", "Quads,Glutes,Calves"],
-["Jump Lunge", "Quads,Glutes"],
+["Squat Jump", "Quads,Glutes,Calves,Cardio"],
+["Jump Lunge", "Quads,Glutes,Cardio"],
 ["Kettlebell Deadlift", "Glutes,Hamstrings"],
 ["Kettlebell Goblet Squat", "Quads,Glutes"],
 ["Kettlebell Front Squat", "Quads,Glutes"],
@@ -331,13 +331,147 @@ const EXERCISE_LIBRARY = [
 ["Human Flag", "Obliques,Shoulders,Back"],
 ["Planche", "Shoulders,Chest,Abs"],
 ["Skin the Cat", "Back,Shoulders"],
-["Bear Crawl", "Shoulders,Abs,Quads"],
+["Bear Crawl", "Shoulders,Abs,Quads,Cardio"],
 ["Crab Walk", "Triceps,Glutes,Shoulders"],
-["Burpee", "Chest,Quads"],
-["Mountain Climber", "Abs"],
-["Jumping Jack", "Calves,Shoulders"],
-["Skater Jump", "Glutes,Quads"],
-["Tuck Jump", "Quads,Calves,Abs"]
+["Burpee", "Chest,Quads,Cardio"],
+["Mountain Climber", "Abs,Cardio"],
+["Jumping Jack", "Calves,Shoulders,Cardio"],
+["Skater Jump", "Glutes,Quads,Cardio"],
+["Tuck Jump", "Quads,Calves,Abs,Cardio"],
+["Walking (Treadmill)", "Cardio"],
+["Brisk Walking", "Cardio"],
+["Incline Walking", "Cardio"],
+["Jogging", "Cardio"],
+["Running", "Cardio"],
+["Sprinting", "Cardio"],
+["Hill Intervals (Treadmill)", "Cardio"],
+["Treadmill Interval Training", "Cardio"],
+["Side Shuffles (Treadmill)", "Cardio"],
+["Backward Walking (Treadmill)", "Cardio"],
+["Stationary Bike", "Cardio"],
+["Upright Bike", "Cardio"],
+["Recumbent Bike", "Cardio"],
+["Spin Bike", "Cardio"],
+["Indoor Cycling", "Cardio"],
+["Outdoor Cycling", "Cardio"],
+["Hill Cycling", "Cardio"],
+["Cycling Sprints", "Cardio"],
+["Cycling Intervals", "Cardio"],
+["Standing Climbs", "Cardio"],
+["Forward Elliptical", "Cardio"],
+["Reverse Elliptical", "Cardio"],
+["High-Resistance Elliptical", "Cardio"],
+["Incline Elliptical", "Cardio"],
+["Elliptical Intervals", "Cardio"],
+["Arm-Emphasis Intervals (Elliptical)", "Cardio"],
+["Cross-Trainer Intervals", "Cardio"],
+["Stair Climber", "Cardio"],
+["Stair Running", "Cardio"],
+["Stair Walking", "Cardio"],
+["Alternating Step-Ups", "Cardio"],
+["Lateral Step-Ups", "Cardio"],
+["Box Step-Ups", "Cardio"],
+["Step Aerobics", "Cardio"],
+["Stair Intervals", "Cardio"],
+["Steady-State Rowing", "Cardio"],
+["Sprint Rowing", "Cardio"],
+["Interval Rowing", "Cardio"],
+["Power Strokes (Rowing)", "Cardio"],
+["Distance Rowing", "Cardio"],
+["Timed Rowing", "Cardio"],
+["Rowing Pyramids", "Cardio"],
+["Basic Bounce (Jump Rope)", "Cardio"],
+["Alternate-Foot Jump (Jump Rope)", "Cardio"],
+["Boxer Skip (Jump Rope)", "Cardio"],
+["High-Knee Skipping (Jump Rope)", "Cardio"],
+["Double Unders (Jump Rope)", "Cardio"],
+["Single-Leg Skipping (Jump Rope)", "Cardio"],
+["Criss-Cross Jumps (Jump Rope)", "Cardio"],
+["Side-to-Side Jumps (Jump Rope)", "Cardio"],
+["Speed Skipping (Jump Rope)", "Cardio"],
+["Jump Rope Intervals", "Cardio"],
+["High Knees", "Cardio"],
+["Butt Kicks", "Cardio"],
+["Plank Jacks", "Cardio"],
+["Fast Feet", "Cardio"],
+["Inchworms", "Cardio"],
+["Seal Jacks", "Cardio"],
+["Running in Place", "Cardio"],
+["Lateral Hops", "Cardio"],
+["Frog Jumps", "Cardio"],
+["Star Jumps", "Cardio"],
+["Heavy-Bag Punching", "Cardio"],
+["Speed-Bag Work", "Cardio"],
+["Shadowboxing", "Cardio"],
+["Boxing Combinations", "Cardio"],
+["Kickboxing", "Cardio"],
+["Muay Thai Drills", "Cardio"],
+["Alternating Front Kicks", "Cardio"],
+["Roundhouse Kicks", "Cardio"],
+["Knee Strikes", "Cardio"],
+["Battle-Rope Punches", "Cardio"],
+["Freestyle Swimming", "Cardio"],
+["Breaststroke", "Cardio"],
+["Backstroke", "Cardio"],
+["Butterfly Stroke", "Cardio"],
+["Sidestroke", "Cardio"],
+["Water Jogging", "Cardio"],
+["Aqua Aerobics", "Cardio"],
+["Water Sprinting", "Cardio"],
+["Treading Water", "Cardio"],
+["Swimming Intervals", "Cardio"],
+["Alternating Waves (Battle Ropes)", "Cardio"],
+["Double-Arm Waves (Battle Ropes)", "Cardio"],
+["Rope Slams", "Cardio"],
+["Alternating Slams (Battle Ropes)", "Cardio"],
+["Outside Circles (Battle Ropes)", "Cardio"],
+["Inside Circles (Battle Ropes)", "Cardio"],
+["Rope Spirals", "Cardio"],
+["Side-to-Side Waves (Battle Ropes)", "Cardio"],
+["Jumping Slams (Battle Ropes)", "Cardio"],
+["Battle-Rope Intervals", "Cardio"],
+["Sled Pushes", "Cardio"],
+["Sled Pulls", "Cardio"],
+["Sled Drags", "Cardio"],
+["Backward Sled Walks", "Cardio"],
+["Weighted Carries", "Cardio"],
+["Sandbag Carries", "Cardio"],
+["Prowler Sprints", "Cardio"],
+["Resistance-Band Running", "Cardio"],
+["Weighted Stair Climbs", "Cardio"],
+["Shuttle Runs", "Cardio"],
+["Sprint Intervals", "Cardio"],
+["Hill Sprints", "Cardio"],
+["Lateral Shuffles", "Cardio"],
+["Carioca Drills", "Cardio"],
+["Ladder Drills", "Cardio"],
+["Cone Drills", "Cardio"],
+["Zigzag Runs", "Cardio"],
+["Bounding", "Cardio"],
+["Skipping Drills", "Cardio"],
+["Hurdle Jumps", "Cardio"],
+["Agility Hops", "Cardio"],
+["Quick-Feet Drills", "Cardio"],
+["Suicide Runs", "Cardio"],
+["Basketball", "Cardio"],
+["Football (Soccer)", "Cardio"],
+["Tennis", "Cardio"],
+["Badminton", "Cardio"],
+["Squash", "Cardio"],
+["Volleyball", "Cardio"],
+["Racquetball", "Cardio"],
+["Handball", "Cardio"],
+["Martial Arts", "Cardio"],
+["Dance", "Cardio"],
+["Zumba", "Cardio"],
+["Aerobic Classes", "Cardio"],
+["Easy Walking", "Cardio"],
+["Low-Impact Step-Ups", "Cardio"],
+["Marching in Place", "Cardio"],
+["Low-Impact Jumping Jacks", "Cardio"],
+["Swimming", "Cardio"],
+["Water Walking", "Cardio"],
+["Low-Impact Aerobics", "Cardio"]
 ];
 
 /* ============================== Store ============================== */
@@ -348,7 +482,7 @@ function defaultState() {
   const c = Object.fromEntries(cats.map(x => [x.name, x.id]));
   return {
     version: 1,
-    libVersion: 2,
+    libVersion: 3,
     categories: cats,
     exercises: EXERCISE_LIBRARY.map(([name, groups]) => ({ id: uid(), name, categoryIds: groups.split(',').map(g => c[g]), notes: '' })),
     sets: [],
@@ -377,6 +511,7 @@ function load() {
   S.diet = S.diet || { days: {} }; S.diet.days = S.diet.days || {};
   S.grocery = Object.assign({ days: 7, items: [] }, S.grocery);
   migrateMuscleGroups();
+  migrateCardio();
 }
 
 // v2: 15 muscle groups + exercise library from the guide. Keeps all logged sets and custom groups/exercises.
@@ -409,7 +544,23 @@ function migrateMuscleGroups() {
   S.categories = S.categories.filter(c => !oldIds[c.id]);
   const order = (c) => { const i = MUSCLE_GROUPS.findIndex(g => lc(g) === lc(c.name)); return i < 0 ? 99 : i; };
   S.categories.sort((a, b) => order(a) - order(b));
-  S.libVersion = 2;
+  S.libVersion = 3; // v2 run already includes everything in the library (Cardio too)
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
+}
+// v3: add the Cardio group and the cardio exercises; tag matching existing exercises (Burpee, Step-Up…) with Cardio
+function migrateCardio() {
+  if ((S.libVersion || 1) >= 3) return;
+  const lc = (x) => x.trim().toLowerCase();
+  let cardio = S.categories.find(c => lc(c.name) === 'cardio');
+  if (!cardio) { cardio = { id: uid(), name: 'Cardio' }; S.categories.push(cardio); }
+  const byName = new Map(S.exercises.map(e => [lc(e.name), e]));
+  for (const [n, g] of EXERCISE_LIBRARY) {
+    if (!g.split(',').includes('Cardio')) continue;
+    const e = byName.get(lc(n));
+    if (e) { if (!e.categoryIds.includes(cardio.id)) e.categoryIds.push(cardio.id); }
+    else S.exercises.push({ id: uid(), name: n, categoryIds: [cardio.id], notes: '' });
+  }
+  S.libVersion = 3;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
 }
 let saveTimer = null;
