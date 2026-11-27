@@ -491,6 +491,9 @@ function defaultState() {
     diet: { days: {} },
     grocery: { days: 7, items: [] },
     chat: [],
+    profile: null,
+    goals: null,
+    weights: [],
     settings: { provider: 'gemini', apiKey: '', model: '', keys: {}, models: {}, fallback: true, weightUnit: 'kg', dateFormat: 'DD/MM/YYYY', gistToken: '', gistId: '', lastCloudBackup: 0, lastExport: 0 },
   };
 }
@@ -513,7 +516,7 @@ function load() {
   S.grocery = Object.assign({ days: 7, items: [] }, S.grocery);
   migrateMuscleGroups();
   migrateCardio();
-  S.deleted = S.deleted || {}; S.su = S.su || {};
+  S.deleted = S.deleted || {}; S.su = S.su || {}; S.weights = S.weights || [];
   S.chat.forEach((m, i) => { if (!m.id) { m.id = 'c' + hashStr(m.role + '|' + m.content); m.t = m.t || i; } });
   rebuildSnap();
 }
@@ -528,6 +531,7 @@ function allRecords(D = S) {
   add('cat', D.categories); add('ex', D.exercises); add('set', D.sets); add('w', D.workouts);
   for (const k in (D.diet?.days || {})) add('meal', D.diet.days[k].meals);
   add('g', D.grocery?.items); add('chat', D.chat);
+  add('bw', D.weights); add('prof', D.profile ? [D.profile] : []); add('goal', D.goals ? [D.goals] : []);
   return out;
 }
 const recJson = (r) => JSON.stringify(r, (k, v) => (k === 'u' ? undefined : v));
@@ -590,6 +594,9 @@ function mergeData(Lsrc, Rsrc) {
   out.workouts = mergeList(L.workouts, R.workouts).sort((a, b) => a.start - b.start);
   out.chat = mergeList(L.chat, R.chat).sort((a, b) => (a.t || 0) - (b.t || 0));
   out.groceryItems = mergeList(L.grocery.items, R.grocery.items);
+  out.weights = mergeList(L.weights || [], R.weights || []).sort((a, b) => a.t - b.t);
+  out.profile = mergeList(L.profile ? [L.profile] : [], R.profile ? [R.profile] : [])[0] || null;
+  out.goals = mergeList(L.goals ? [L.goals] : [], R.goals ? [R.goals] : [])[0] || null;
   const meals = (D) => Object.entries(D.diet.days || {}).flatMap(([day, d]) => (d.meals || []).map(m => ({ ...m, _day: day })));
   const days = {};
   for (const m of mergeList(meals(L), meals(R))) { const d = m._day; delete m._day; (days[d] ||= { meals: [] }).meals.push(m); }
@@ -607,15 +614,15 @@ function mergeData(Lsrc, Rsrc) {
 // Merge the backup into this device. Returns true if anything on this device changed.
 function applyMerge(R) {
   stampChanges();
-  const before = JSON.stringify([S.categories, S.exercises, S.sets, S.workouts, S.chat, S.grocery, S.diet, S.settings.weightUnit, S.settings.dateFormat]);
+  const before = JSON.stringify([S.categories, S.exercises, S.sets, S.workouts, S.chat, S.grocery, S.diet, S.settings.weightUnit, S.settings.dateFormat, S.weights, S.profile, S.goals]);
   const M = mergeData(S, R);
   S.categories = M.categories; S.exercises = M.exercises; S.sets = M.sets; S.workouts = M.workouts; S.chat = M.chat;
-  S.grocery.items = M.groceryItems; S.diet.days = M.days; S.deleted = M.deleted; S.su = M.su; S.libVersion = M.libVersion;
+  S.grocery.items = M.groceryItems; S.diet.days = M.days; S.weights = M.weights; S.profile = M.profile; S.goals = M.goals; S.deleted = M.deleted; S.su = M.su; S.libVersion = M.libVersion;
   for (const k in M.scalars) SCALARS[k][1](M.scalars[k]);
   const aw = activeWorkout(); if (S.activeWorkoutId && (!aw || aw.end)) S.activeWorkoutId = null;
   rebuildSnap();
   try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
-  return before !== JSON.stringify([S.categories, S.exercises, S.sets, S.workouts, S.chat, S.grocery, S.diet, S.settings.weightUnit, S.settings.dateFormat]);
+  return before !== JSON.stringify([S.categories, S.exercises, S.sets, S.workouts, S.chat, S.grocery, S.diet, S.settings.weightUnit, S.settings.dateFormat, S.weights, S.profile, S.goals]);
 }
 function refreshAfterSync() {
   // Don't redraw while the user is typing in a field or has a window open; closing it redraws anyway.
@@ -1418,7 +1425,7 @@ function metricExampleSheet(k) {
 
 function viewProgress() {
   const withSets = S.exercises.filter(e => S.sets.some(s => s.exerciseId === e.id)).sort((a, b) => a.name.localeCompare(b.name));
-  if (!withSets.length) return `<div class="empty"><div class="big">📈</div>Log some sets and your progress graphs will appear here.</div>`;
+  if (!withSets.length) return bodyWeightCard() + `<div class="empty"><div class="big">📈</div>Log some sets and your progress graphs will appear here.</div>`;
   if (!UI.progressEx || !withSets.find(e => e.id === UI.progressEx)) UI.progressEx = withSets[0].id;
   const e = exById(UI.progressEx);
   const avail = metricsFor(e.id);
@@ -1436,6 +1443,7 @@ function viewProgress() {
     <div class="chart-wrap">${lineChart(pts)}</div></div>`;
   h += prCardsHtml(e, rec, false);
 
+  h += bodyWeightCard();
   // Weekly volume overall
   const weeks = {};
   for (const s of S.sets) {
@@ -1453,10 +1461,10 @@ function viewProgress() {
   return h;
 }
 
-function lineChart(pts, bars = false) {
+function lineChart(pts, bars = false, goal = null, plain = false) {
   const W = 340, H = 190, L = 40, R = 10, T = 12, B = 26;
   if (!pts.length) return `<p class="muted small">No data yet.</p>`;
-  const ys = pts.map(p => p.y);
+  const ys = pts.map(p => p.y).concat(goal !== null ? [goal] : []);
   let min = bars ? 0 : Math.min(...ys), max = Math.max(...ys);
   if (min === max) { min = Math.max(0, min - 1); max = max + 1; }
   const padY = (max - min) * 0.1; if (!bars) min = Math.max(0, min - padY); max += padY;
@@ -1482,7 +1490,8 @@ function lineChart(pts, bars = false) {
     const area = `${path} L${x(pts.length - 1).toFixed(1)},${y(min)} L${x(0).toFixed(1)},${y(min)} Z`;
     g += `<defs><linearGradient id="gr" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#ff6a3d" stop-opacity=".35"/><stop offset="1" stop-color="#ff6a3d" stop-opacity="0"/></linearGradient></defs>`;
     if (pts.length > 1) g += `<path d="${area}" fill="url(#gr)"/><path d="${path}" fill="none" stroke="#ff6a3d" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
-    const maxY = Math.max(...ys);
+    const maxY = plain ? null : Math.max(...pts.map(p => p.y));
+    if (goal !== null) g += `<line x1="${L}" x2="${W - R}" y1="${y(goal)}" y2="${y(goal)}" stroke="#3ccf7c" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${L + 4}" y="${y(goal) - 5}" fill="#3ccf7c" font-size="10" font-weight="700">goal ${fmtN(goal)}</text>`;
     pts.forEach((p, i) => { g += `<circle cx="${x(i)}" cy="${y(p.y)}" r="${p.y === maxY ? 5 : 3.5}" fill="${p.y === maxY ? '#ffd34d' : '#ff6a3d'}" stroke="#0f1115" stroke-width="1.5"/>`; });
     const li = pts.length - 1;
     g += `<text x="${Math.min(x(li), W - R - 2)}" y="${y(pts[li].y) - 9}" fill="#eef0f4" font-size="11" font-weight="700" text-anchor="end">${fmtN(pts[li].y)}</text>`;
@@ -1574,20 +1583,24 @@ const sortMeals = (meals) => [...meals].sort((a, b) => (MEAL_TYPES[a.type].order
 
 function viewDiet() {
   const k = UI.dietDate; const day = dietDay(k);
-  let h = `<div class="date-nav"><button class="btn sm" data-act="dietShift" data-id="-1">‹</button>
+  let h = goalButtonHtml() + `<div class="date-nav"><button class="btn sm" data-act="dietShift" data-id="-1">‹</button>
     <div style="text-align:center"><div class="d">${esc(fmtDayLong(k))}</div>${k !== todayKey() ? `<button class="btn xs ghost" data-act="dietToday" style="margin-top:3px">Go to today</button>` : `<div class="tiny muted">${fmtDay(k)}</div>`}</div>
     <button class="btn sm" data-act="dietShift" data-id="1">›</button></div>`;
   const meals = day ? sortMeals(day.meals) : [];
   const eaten = { kcal: 0, protein: 0, carbs: 0, fat: 0 }, plan = { kcal: 0, protein: 0, carbs: 0, fat: 0 };
   for (const m of meals) { const t = mealTotals(m); for (const x in plan) { plan[x] += t[x]; if (m.eaten) eaten[x] += t[x]; } }
-  h += `<div class="card"><div class="macro-bar">${[['kcal', 'kcal'], ['protein', 'Protein'], ['carbs', 'Carbs'], ['fat', 'Fat']].map(([x, l]) =>
-    `<div class="m"><div class="v">${Math.round(eaten[x])}</div><div class="l">${l}${x === 'kcal' ? '' : ' g'}</div><div class="p">of ${Math.round(plan[x])} planned</div></div>`).join('')}</div>
+  const G = goalsForDay(k);
+  const leftTxt = (v, goal, unit, limit) => { if (!goal) return ''; const d = Math.round(goal - v); return d >= 0 ? `<div class="left">${d.toLocaleString()}${unit} ${limit ? 'under limit' : 'left'}</div>` : `<div class="left ${limit ? 'bad' : 'over'}">${(-d).toLocaleString()}${unit} over</div>`; };
+  h += `<div class="card">${G?.dayType ? `<div class="tiny muted" style="text-align:center;margin:-4px 0 8px">${G.dayType === 'training' ? '🏋️ Training day goals' : '😴 Rest day goals'}</div>` : ''}<div class="macro-bar">${[['kcal', 'kcal'], ['protein', 'Protein'], ['carbs', 'Carbs'], ['fat', 'Fat']].map(([x, l]) =>
+    `<div class="m"><div class="v">${Math.round(eaten[x])}</div><div class="l">${l}${x === 'kcal' ? '' : ' g'}</div>${G && num(G[x]) ? `${goalBar(eaten[x], num(G[x]))}<div class="p">of ${num(G[x]).toLocaleString()} goal</div>${leftTxt(eaten[x], num(G[x]), x === 'kcal' ? '' : ' g')}` : `<div class="p">of ${Math.round(plan[x])} planned</div>`}</div>`).join('')}</div>
     <div class="macro-bar drinks-bar">${[['water', '💧 Water'], ['drink', '🥤 Other drinks']].map(([type, l]) => {
       const ms = meals.filter(m => m.type === type); const planMl = ms.reduce((a, m) => a + m.products.reduce((b, p) => b + toMl(p), 0), 0);
       const drunk = ms.filter(m => m.eaten).reduce((a, m) => a + m.products.reduce((b, p) => b + toMl(p), 0), 0);
-      return `<div class="m"><div class="v">${fmtMl(drunk)}</div><div class="l">${l}</div><div class="p">of ${fmtMl(planMl)} planned</div></div>`; }).join('')}
+      const wg = type === 'water' && G && num(G.water) ? num(G.water) : 0;
+      return `<div class="m"><div class="v">${fmtMl(drunk)}</div><div class="l">${l}</div>${wg ? `${goalBar(drunk, wg)}<div class="p">of ${fmtMl(wg)} goal</div>${drunk < wg ? `<div class="left">${fmtMl(wg - drunk)} left</div>` : `<div class="left ok">goal reached ✓</div>`}` : `<div class="p">of ${fmtMl(planMl)} planned</div>`}</div>`; }).join('')}
       ${(() => { const cafPlan = meals.reduce((a, m) => a + mealTotals(m).caffeine, 0), caf = meals.filter(m => m.eaten).reduce((a, m) => a + mealTotals(m).caffeine, 0);
-        return `<div class="m"><div class="v">${Math.round(caf)} mg</div><div class="l">☕ Caffeine</div><div class="p">of ${Math.round(cafPlan)} mg planned</div></div>`; })()}</div></div>`;
+        const lim = G && num(G.caffeine) ? num(G.caffeine) : 0;
+        return `<div class="m"><div class="v">${Math.round(caf)} mg</div><div class="l">☕ Caffeine</div>${lim ? `${goalBar(caf, lim, { limit: true })}<div class="p">limit ${lim} mg</div>${leftTxt(caf, lim, ' mg', true)}` : `<div class="p">of ${Math.round(cafPlan)} mg planned</div>`}</div>`; })()}</div></div>`;
 
   if (!meals.length) {
     const prevKey = Object.keys(S.diet.days).filter(d => d < k && S.diet.days[d].meals.length).sort().pop();
@@ -2188,6 +2201,8 @@ document.addEventListener('change', (e) => {
   const n = el.dataset.in;
   if (el.type === 'checkbox' || el.tagName === 'SELECT' || el.type === 'file' || el.type === 'date' || el.type === 'range') { I[n] && I[n](el); return; }
   if (n === 'setGist') { I.setGist(el); return; }
+  if (n === 'gNum' && GD && sheetRender === goalsSheet) { I.gNum(); return; }
+  if (n === 'gGoal' && GD && sheetRender === goalsSheet) { refreshGoalBits(); return; }
   if (n === 'setKey') { render(); return; }
   // Re-render sheet after edits that affect PR badges etc.
   if (['setWeight', 'setReps', 'setTime'].includes(n)) render();
@@ -2201,6 +2216,332 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'chatBox') { e.preventDefault(); A.sendChat(); }
   if (e.key === 'Enter' && e.target.id === 'gName') { e.preventDefault(); $('#gQty')?.focus(); }
 });
+
+/* ============================== GOALS (profile, targets, weight log) ============================== */
+// Profile: { id:'profile', birth, gender, heightCm, weightKg, activity, wUnit:'kg'|'lb'|'st', hUnit:'cm'|'ftin' }
+// Goals:   { id:'goals', type:'lose'|'maintain'|'gain', targetKg, pace (kg/week), kcal, protein, carbs, fat, water (ml), caffeine (mg),
+//            split (bool), train:{kcal,protein,carbs,fat}, rest:{kcal,protein,carbs,fat} }
+const KG_PER_LB = 0.45359237;
+const ACTIVITY = {
+  sedentary: { label: 'Sedentary', desc: 'Desk job, little exercise', f: 1.2 },
+  light: { label: 'Light', desc: 'Exercise 1–3 days a week', f: 1.375 },
+  moderate: { label: 'Moderate', desc: 'Exercise 3–5 days a week', f: 1.55 },
+  very: { label: 'Very active', desc: 'Hard exercise 6–7 days a week', f: 1.725 },
+  extra: { label: 'Extremely active', desc: 'Physical job + daily training', f: 1.9 },
+};
+const GENDERS = { male: 'Male', female: 'Female', other: 'Other / prefer not to say' };
+const PACES = { lose: [0.25, 0.5, 0.75, 1], gain: [0.1, 0.25, 0.5] };
+
+// ---- unit helpers ----
+const ageFrom = (iso) => { if (!iso) return 0; const b = keyToDate(iso), n = new Date(); let a = n.getFullYear() - b.getFullYear(); if (n < new Date(n.getFullYear(), b.getMonth(), b.getDate())) a--; return a; };
+function fmtBody(kg, unit, withUnit = true) {
+  if (!kg) return '—';
+  if (unit === 'lb') return `${fmtN(kg / KG_PER_LB)}${withUnit ? ' lb' : ''}`;
+  if (unit === 'st') { const lb = kg / KG_PER_LB; let st = Math.floor(lb / 14), r = Math.round(lb - st * 14); if (r === 14) { st++; r = 0; } return `${st} st ${r} lb`; }
+  return `${fmtN(kg)}${withUnit ? ' kg' : ''}`;
+}
+const bodyInUnit = (kg, unit) => unit === 'lb' ? kg / KG_PER_LB : unit === 'st' ? kg / KG_PER_LB / 14 : kg;
+const fmtHeight = (cm, unit) => { if (!cm) return '—'; if (unit === 'ftin') { const inch = cm / 2.54; let ft = Math.floor(inch / 12), i = Math.round(inch - ft * 12); if (i === 12) { ft++; i = 0; } return `${ft}′${i}″`; } return `${Math.round(cm)} cm`; };
+// Inputs for a body weight in the chosen unit (st uses st + lb boxes)
+function bodyWeightInputs(pre, kg, unit) {
+  if (unit === 'st') { const lb = kg ? kg / KG_PER_LB : 0; const st = kg ? Math.floor(lb / 14) : ''; const r = kg ? Math.round((lb - st * 14) * 10) / 10 : '';
+    return `<div class="tpair"><input type="text" inputmode="decimal" id="${pre}St" placeholder="st" value="${st}" data-in="gNum"><b>st</b><input type="text" inputmode="decimal" id="${pre}Lb" placeholder="lb" value="${r}" data-in="gNum"><b>lb</b></div>`; }
+  return `<input type="text" inputmode="decimal" id="${pre}W" placeholder="${unit}" value="${kg ? r1(bodyInUnit(kg, unit)) : ''}" data-in="gNum">`;
+}
+function readBodyWeight(pre, unit) {
+  if (unit === 'st') return (num($('#' + pre + 'St')?.value) * 14 + num($('#' + pre + 'Lb')?.value)) * KG_PER_LB;
+  const v = num($('#' + pre + 'W')?.value); return unit === 'lb' ? v * KG_PER_LB : v;
+}
+function heightInputs(cm, unit) {
+  if (unit === 'ftin') { const inch = cm ? cm / 2.54 : 0; const ft = cm ? Math.floor(inch / 12) : ''; const i = cm ? Math.round(inch - ft * 12) : '';
+    return `<div class="tpair"><input type="text" inputmode="numeric" id="gHFt" placeholder="ft" value="${ft}" data-in="gNum"><b>ft</b><input type="text" inputmode="numeric" id="gHIn" placeholder="in" value="${i}" data-in="gNum"><b>in</b></div>`; }
+  return `<input type="text" inputmode="decimal" id="gHCm" placeholder="cm" value="${cm ? Math.round(cm) : ''}" data-in="gNum">`;
+}
+const readHeight = (unit) => unit === 'ftin' ? (num($('#gHFt')?.value) * 12 + num($('#gHIn')?.value)) * 2.54 : num($('#gHCm')?.value);
+
+// ---- the maths (Mifflin–St Jeor) ----
+function calcGoals(p, type, targetKg, pace) {
+  const age = ageFrom(p.birth), w = p.weightKg, h = p.heightCm;
+  const base = 10 * w + 6.25 * h - 5 * age;
+  const bmr = p.gender === 'male' ? base + 5 : p.gender === 'female' ? base - 161 : base - 78;
+  const tdee = bmr * (ACTIVITY[p.activity]?.f || 1.375);
+  const dayDelta = (pace || 0) * 7700 / 7; // ~7700 kcal per kg of body weight
+  let kcal = type === 'lose' ? tdee - dayDelta : type === 'gain' ? tdee + dayDelta : tdee;
+  kcal = Math.round(kcal / 10) * 10;
+  const protein = Math.round(Math.min(w * (type === 'lose' ? 2.0 : type === 'gain' ? 1.8 : 1.6), 250));
+  const fat = Math.round((kcal * 0.27) / 9);
+  const carbs = Math.max(50, Math.round((kcal - protein * 4 - fat * 9) / 4));
+  const water = Math.round((w * 35 + (['moderate', 'very', 'extra'].includes(p.activity) ? 500 : 0)) / 100) * 100;
+  return { bmr: Math.round(bmr), tdee: Math.round(tdee), kcal, protein, carbs, fat, water, caffeine: 400 };
+}
+function goalWarnings(p, g) {
+  const out = []; if (!p) return out;
+  const floor = p.gender === 'male' ? 1500 : 1200;
+  if (g.kcal && g.kcal < floor) out.push(`${g.kcal} kcal a day is very low. Going under about ${floor} kcal makes it hard to get enough nutrients and keep muscle — consider a slower pace.`);
+  if (g.type === 'lose' && g.pace && p.weightKg && g.pace > p.weightKg * 0.01) out.push(`Losing ${fmtBody(g.pace, p.wUnit === 'st' ? 'lb' : p.wUnit)} a week is more than 1% of your body weight — that's aggressive and harder to keep up. 0.5–1% a week is a safer target.`);
+  if (g.type === 'gain' && g.pace > 0.5) out.push('Gaining more than about 0.5 kg a week usually adds more fat than muscle.');
+  if (g.type === 'lose' && g.targetKg && p.heightCm && g.targetKg / ((p.heightCm / 100) ** 2) < 18.5) out.push('Your goal weight is below the healthy range for your height (BMI under 18.5). Please check this goal with a doctor.');
+  if (ageFrom(p.birth) < 18) out.push('These formulas are made for adults. If you are under 18, please set goals together with a doctor or parent.');
+  if (g.caffeine > 400) out.push('More than 400 mg of caffeine a day is above the usual safe limit for adults.');
+  return out;
+}
+function etaText(p, g) {
+  if (!p?.weightKg || g.type === 'maintain' || !g.targetKg || !g.pace) return '';
+  const diff = g.type === 'lose' ? p.weightKg - g.targetKg : g.targetKg - p.weightKg;
+  if (diff <= 0) return g.type === 'lose' ? 'Your goal weight is not below your current weight.' : 'Your goal weight is not above your current weight.';
+  const weeks = Math.ceil(diff / g.pace); const d = new Date(); d.setDate(d.getDate() + weeks * 7);
+  return `About ${weeks} week${weeks === 1 ? '' : 's'} — around ${fmtDate(dayKey(d))}`;
+}
+// Training day = any set logged that day
+const isTrainingDay = (k) => S.sets.some(s => dayKey(s.t) === k);
+function goalsForDay(k) {
+  const g = S.goals; if (!g) return null;
+  if (g.split && g.train && g.rest) { const tr = isTrainingDay(k); return { ...g, ...(tr ? g.train : g.rest), dayType: tr ? 'training' : 'rest' }; }
+  return { ...g, dayType: null };
+}
+
+// ---- goal screen ----
+let GD = null; // draft while the screen is open
+function openGoals() {
+  const p = S.profile ? { ...S.profile } : { wUnit: S.settings.weightUnit === 'lb' ? 'lb' : 'kg', hUnit: 'cm' };
+  const g = S.goals ? JSON.parse(JSON.stringify(S.goals)) : { type: null, targetKg: 0, pace: 0.5, kcal: '', protein: '', carbs: '', fat: '', water: '', caffeine: 400, split: false };
+  GD = { step: S.profile ? 2 : 1, p, g, editDetails: false, aiOpen: false, aiText: '', aiResult: null };
+  openSheet(goalsSheet);
+}
+function profileFormHtml(p) {
+  return `<label class="field"><span>Birth date</span>${dateField({ handler: 'gBirth', iso: p.birth || '', max: todayKey() })}</label>${dateHint()}
+    <label class="field"><span>Gender</span></label><div class="chips" style="margin:-4px 0 12px">${Object.entries(GENDERS).map(([k, v]) => `<button class="chip ${p.gender === k ? 'on' : ''}" data-act="gSet" data-f="gender" data-id="${k}">${v}</button>`).join('')}</div>
+    <label class="field"><span class="spread">Height <span class="unit-switch">${['cm', 'ftin'].map(u => `<button class="${p.hUnit === u ? 'on' : ''}" data-act="gUnitH" data-id="${u}">${u === 'ftin' ? 'ft/in' : 'cm'}</button>`).join('')}</span></span>${heightInputs(p.heightCm, p.hUnit)}</label>
+    <label class="field"><span class="spread">Current weight <span class="unit-switch">${['kg', 'lb', 'st'].map(u => `<button class="${p.wUnit === u ? 'on' : ''}" data-act="gUnitW" data-id="${u}">${u}</button>`).join('')}</span></span>${bodyWeightInputs('gCur', p.weightKg, p.wUnit)}</label>
+    <label class="field"><span>Activity level</span></label><div class="act-list">${Object.entries(ACTIVITY).map(([k, v]) => `<button class="act-opt ${p.activity === k ? 'on' : ''}" data-act="gSet" data-f="activity" data-id="${k}"><b>${v.label}</b><span>${v.desc}</span></button>`).join('')}</div>`;
+}
+function readProfileForm() { const p = GD.p; p.heightCm = readHeight(p.hUnit); p.weightKg = readBodyWeight('gCur', p.wUnit); }
+function profileMissing(p) {
+  const m = [];
+  if (!p.birth || ageFrom(p.birth) < 10 || ageFrom(p.birth) > 110) m.push('birth date');
+  if (!p.gender) m.push('gender');
+  if (!(p.heightCm >= 100 && p.heightCm <= 250)) m.push('height');
+  if (!(p.weightKg >= 30 && p.weightKg <= 350)) m.push('current weight');
+  if (!p.activity) m.push('activity level');
+  return m;
+}
+const goalField = (k, label, unit, val, pre = '') => `<label class="field"><span>${label}</span><div class="unit-input"><input type="text" inputmode="decimal" id="g_${pre}${k}" value="${val ?? ''}" data-in="gGoal" data-f="${k}" data-pre="${pre}" placeholder="—"><i>${unit}</i></div></label>`;
+function goalsSheet() {
+  const { p, g } = GD; let h = '';
+  if (GD.step === 1) {
+    h += sheetHead('Set a goal', false) + `<p class="muted" style="margin-top:-6px">First, a few details so Lift can suggest the right numbers for you. All fields are required.</p>`;
+    h += profileFormHtml(p);
+    h += `<button class="btn primary block" data-act="gNext">Continue</button>`;
+    return h;
+  }
+  h += sheetHead('Your goals', false);
+  // details (editable)
+  h += `<div class="card" style="background:var(--card2)"><div class="spread"><h3 style="margin:0">Your details</h3><button class="btn xs ghost" data-act="gToggleDetails">${GD.editDetails ? 'Done' : 'Edit'}</button></div>`;
+  if (GD.editDetails) h += `<div style="margin-top:10px">${profileFormHtml(p)}</div>`;
+  else h += `<p class="small muted" style="margin:6px 0 0">${ageFrom(p.birth)} years · ${GENDERS[p.gender]} · ${fmtHeight(p.heightCm, p.hUnit)} · <b style="color:var(--text)">${fmtBody(p.weightKg, p.wUnit)}</b> · ${ACTIVITY[p.activity].label}</p>`;
+  h += `</div>`;
+  // weight goal
+  h += `<h3 style="margin:14px 0 8px">1. Weight goal</h3><div class="seg">${[['lose', 'Lose weight'], ['maintain', 'Maintain'], ['gain', 'Gain weight']].map(([k, l]) => `<button class="${g.type === k ? 'on' : ''}" data-act="gType" data-id="${k}">${l}</button>`).join('')}</div>`;
+  if (g.type && g.type !== 'maintain') {
+    h += `<label class="field"><span>Goal weight (${p.wUnit})</span>${bodyWeightInputs('gTgt', g.targetKg, p.wUnit)}</label>`;
+    h += `<label class="field"><span>Pace per week</span></label><div class="chips" style="margin:-4px 0 8px">${PACES[g.type].map(v => `<button class="chip ${g.pace === v ? 'on' : ''}" data-act="gPace" data-id="${v}">${fmtBody(v, p.wUnit === 'st' ? 'lb' : p.wUnit)}</button>`).join('')}</div>`;
+    h += `<p class="small" id="gEta" style="margin:0 0 6px;color:var(--accent2)">${etaText(p, g)}</p>`;
+  }
+  // suggestion (updated in place while typing, so the keyboard never jumps)
+  const ready = goalReady();
+  h += `<div id="gSuggest">${suggestHtml()}</div>`;
+  // daily goals
+  h += `<h3 style="margin:14px 0 8px">2. Daily goals</h3>`;
+  h += `<div class="grid2">${goalField('kcal', 'Calories', 'kcal', g.kcal)}${goalField('protein', 'Protein', 'g', g.protein)}${goalField('carbs', 'Carbs', 'g', g.carbs)}${goalField('fat', 'Fat', 'g', g.fat)}${goalField('water', 'Water', 'ml', g.water)}${goalField('caffeine', 'Caffeine limit', 'mg', g.caffeine)}</div>`;
+  h += `<p class="tiny muted" id="gMacroCheck" style="margin:-4px 2px 10px">${macroCheckText(g)}</p>`;
+  // training vs rest days
+  h += `<label class="row" style="margin:4px 0 10px"><input type="checkbox" ${g.split ? 'checked' : ''} data-in="gSplit"> <span>Different goals on training and rest days</span></label>`;
+  if (g.split) {
+    const tr = g.train || {}, rs = g.rest || {};
+    h += `<p class="tiny muted" style="margin:-4px 2px 8px">A training day is any day you log a set. Usually: more carbs on training days, fewer on rest days.</p>
+      <div class="split-goals"><div><h4>🏋️ Training day</h4>${goalField('kcal', 'Calories', 'kcal', tr.kcal, 'train_')}${goalField('protein', 'Protein', 'g', tr.protein, 'train_')}${goalField('carbs', 'Carbs', 'g', tr.carbs, 'train_')}${goalField('fat', 'Fat', 'g', tr.fat, 'train_')}</div>
+      <div><h4>😴 Rest day</h4>${goalField('kcal', 'Calories', 'kcal', rs.kcal, 'rest_')}${goalField('protein', 'Protein', 'g', rs.protein, 'rest_')}${goalField('carbs', 'Carbs', 'g', rs.carbs, 'rest_')}${goalField('fat', 'Fat', 'g', rs.fat, 'rest_')}</div></div>`;
+  }
+  // warnings
+  h += `<div id="gWarn">${warnHtml()}</div>`;
+  // AI help
+  h += `<div id="gAiBtn">${aiBtnHtml()}</div>`;
+  if (GD.aiOpen && ready) {
+    h += `<div class="card" style="background:var(--card2);margin-top:10px"><label class="field"><span>Tell the AI about your fitness goals</span>
+      <textarea id="gAiText" data-in="gAiText" placeholder="e.g. I want to lose fat but keep my strength. I train 4× a week, mostly weights, and I'm often hungry in the evening.">${esc(GD.aiText)}</textarea></label>
+      <button class="btn primary block" data-act="gAiAsk" ${UI.aiBusy ? 'disabled' : ''}>${UI.aiBusy ? 'Thinking…' : 'Ask AI for my goals'}</button>`;
+    if (GD.aiResult) {
+      const r = GD.aiResult;
+      h += `<div class="small" style="margin-top:10px">${md(r.explanation || '')}</div>
+        <div class="sg-grid" style="margin:8px 0"><div><b>${r.kcal}</b><span>kcal</span></div><div><b>${r.protein} g</b><span>protein</span></div><div><b>${r.carbs} g</b><span>carbs</span></div><div><b>${r.fat} g</b><span>fat</span></div><div><b>${fmtMl(r.water_ml)}</b><span>water</span></div></div>
+        <button class="btn good block" data-act="gAiApply">✓ Apply these goals</button>`;
+    }
+    h += `</div>`;
+  }
+  h += `<button class="btn primary block" style="margin-top:14px" data-act="gSave">Save goals</button>`;
+  if (S.goals) h += `<button class="btn danger block" style="margin-top:8px" data-act="gClear">Remove goals</button>`;
+  return h;
+}
+const goalReady = () => !!GD.g.type && (GD.g.type === 'maintain' || GD.g.targetKg >= 30);
+const aiBtnHtml = () => { const r = goalReady(); return `<button class="btn block ${r ? '' : 'ghost'}" data-act="gAiOpen" ${r ? '' : 'disabled'} style="margin-top:6px">🤖 Need help with your goals?</button>${r ? '' : '<p class="tiny muted" style="text-align:center;margin:4px 0 0">Choose your weight goal first.</p>'}`; };
+function suggestHtml() {
+  if (!goalReady()) return '';
+  const { p, g } = GD; const c = calcGoals(p, g.type, g.targetKg, g.pace);
+  return `<div class="suggest"><div class="spread"><b>Suggested for you</b><button class="btn xs primary" data-act="gUseSuggested">Use these</button></div>
+    <div class="sg-grid"><div><b>${c.kcal}</b><span>kcal</span></div><div><b>${c.protein} g</b><span>protein</span></div><div><b>${c.carbs} g</b><span>carbs</span></div><div><b>${c.fat} g</b><span>fat</span></div><div><b>${fmtMl(c.water)}</b><span>water</span></div></div>
+    <p class="tiny muted" style="margin:6px 0 0">Your body burns about <b>${c.tdee} kcal</b> a day (${c.bmr} at rest × ${ACTIVITY[p.activity].label.toLowerCase()} activity)${g.type === 'maintain' ? '' : `, ${g.type === 'lose' ? 'minus' : 'plus'} ${Math.round(g.pace * 1100)} kcal for your pace`}.</p></div>`;
+}
+function macroCheckText(g) {
+  const p = num(g.protein), c = num(g.carbs), f = num(g.fat); if (!p && !c && !f) return '';
+  const k = Math.round(p * 4 + c * 4 + f * 9); const diff = num(g.kcal) ? k - num(g.kcal) : 0;
+  return `Your protein, carbs and fat add up to <b>${k} kcal</b>${num(g.kcal) && Math.abs(diff) > 50 ? ` — ${Math.abs(diff)} kcal ${diff > 0 ? 'more' : 'less'} than your calorie goal` : ''}.`;
+}
+const warnHtml = () => goalWarnings(GD.p, GD.g).map(w => `<div class="notice warn" style="margin:6px 0">⚠️ ${w}</div>`).join('');
+function refreshGoalBits() {
+  const e = $('#gEta'); if (e) e.textContent = etaText(GD.p, GD.g);
+  const m = $('#gMacroCheck'); if (m) m.innerHTML = macroCheckText(GD.g);
+  const w = $('#gWarn'); if (w) w.innerHTML = warnHtml();
+  const sg = $('#gSuggest'); if (sg) sg.innerHTML = suggestHtml();
+  const ab = $('#gAiBtn'); if (ab && !GD.aiOpen) ab.innerHTML = aiBtnHtml();
+}
+function splitDefaults(g) { // training: +150 kcal from carbs, rest: −150 kcal from carbs
+  const b = { kcal: num(g.kcal), protein: num(g.protein), carbs: num(g.carbs), fat: num(g.fat) };
+  return { train: { ...b, kcal: b.kcal + 150, carbs: b.carbs + 38 }, rest: { ...b, kcal: b.kcal - 150, carbs: Math.max(0, b.carbs - 38) } };
+}
+function logBodyWeight(kg, day = todayKey()) {
+  if (!kg) return;
+  const same = S.weights.find(w => dayKey(w.t) === day);
+  if (same) same.kg = Math.round(kg * 100) / 100; else { const d = keyToDate(day); d.setHours(12); S.weights.push({ id: uid(), t: d.getTime(), kg: Math.round(kg * 100) / 100 }); }
+  S.weights.sort((a, b) => a.t - b.t);
+  const latest = S.weights[S.weights.length - 1];
+  if (S.profile && latest) S.profile.weightKg = latest.kg;
+}
+
+Object.assign(A, {
+  openGoals() { openGoals(); },
+  gSet(el) { if (GD.step === 1 || GD.editDetails) readProfileForm(); GD.p[el.dataset.f] = el.dataset.id; renderSheet(); },
+  gUnitH(el) { readProfileForm(); GD.p.hUnit = el.dataset.id; renderSheet(); },
+  gUnitW(el) {
+    readProfileForm(); if (GD.step === 2 && GD.g.type && GD.g.type !== 'maintain') GD.g.targetKg = readBodyWeight('gTgt', GD.p.wUnit) || GD.g.targetKg;
+    GD.p.wUnit = el.dataset.id; renderSheet();
+  },
+  gNext() {
+    readProfileForm(); const miss = profileMissing(GD.p);
+    if (miss.length) { toast(`Please fill in: ${miss.join(', ')}`, false, 3500); return; }
+    GD.step = 2; renderSheet(); $('#sheet').scrollTop = 0;
+  },
+  gToggleDetails() {
+    if (GD.editDetails) { readProfileForm(); const miss = profileMissing(GD.p); if (miss.length) { toast(`Please fill in: ${miss.join(', ')}`, false, 3500); return; } }
+    GD.editDetails = !GD.editDetails; renderSheet();
+  },
+  gType(el) {
+    if (GD.editDetails) readProfileForm();
+    const g = GD.g; g.type = el.dataset.id;
+    if (g.type !== 'maintain' && !PACES[g.type].includes(g.pace)) g.pace = g.type === 'lose' ? 0.5 : 0.25;
+    renderSheet();
+  },
+  gPace(el) { const t = readBodyWeight('gTgt', GD.p.wUnit); if (t) GD.g.targetKg = t; GD.g.pace = +el.dataset.id; renderSheet(); },
+  gUseSuggested() {
+    if (GD.editDetails) readProfileForm();
+    const c = calcGoals(GD.p, GD.g.type, GD.g.targetKg, GD.g.pace);
+    Object.assign(GD.g, { kcal: c.kcal, protein: c.protein, carbs: c.carbs, fat: c.fat, water: c.water, caffeine: GD.g.caffeine || 400 });
+    if (GD.g.split) Object.assign(GD.g, splitDefaults(GD.g));
+    renderSheet(); toast('Suggested goals filled in — edit any number you like');
+  },
+  gAiOpen() { GD.aiOpen = !GD.aiOpen; renderSheet(); setTimeout(() => $('#gAiText')?.focus(), 100); },
+  async gAiAsk() {
+    if (!hasAI()) { toast('Add an AI key in Settings first'); return; }
+    if (GD.editDetails) readProfileForm();
+    const { p, g } = GD; const c = calcGoals(p, g.type, g.targetKg, g.pace);
+    const prompt = `Help me set daily nutrition goals.
+Me: ${ageFrom(p.birth)} years old, ${GENDERS[p.gender]}, ${Math.round(p.heightCm)} cm, ${r1(p.weightKg)} kg, activity: ${ACTIVITY[p.activity].label} (${ACTIVITY[p.activity].desc}).
+Weight goal: ${g.type}${g.type !== 'maintain' ? ` to ${r1(g.targetKg)} kg at ${g.pace} kg per week` : ''}.
+Formula estimate: maintenance ${c.tdee} kcal/day; suggested ${c.kcal} kcal, ${c.protein} g protein, ${c.carbs} g carbs, ${c.fat} g fat, ${c.water} ml water.
+My own words: ${GD.aiText || '(nothing added)'}
+Give safe, evidence-based daily goals (never below 1200 kcal for women / 1500 for men; weight loss at most ~1% of body weight per week). Reply with ONLY JSON:
+{"kcal":0,"protein":0,"carbs":0,"fat":0,"water_ml":0,"caffeine_mg":400,"training_day":{"kcal":0,"protein":0,"carbs":0,"fat":0},"rest_day":{"kcal":0,"protein":0,"carbs":0,"fat":0},"explanation":"short Markdown: why these numbers, 3-6 practical tips for my goals"}`;
+    UI.aiBusy = true; renderSheet();
+    try {
+      const txt = await aiCall({ system: 'You are a careful sports nutritionist. Output only valid JSON.', messages: [{ role: 'user', content: prompt }], json: true });
+      const r = parseJson(txt); for (const k of ['kcal', 'protein', 'carbs', 'fat', 'water_ml']) r[k] = Math.round(num(r[k]));
+      if (!r.kcal) throw new Error('The AI did not return goals — try again.');
+      GD.aiResult = r;
+    } catch (e) { toast('⚠️ ' + e.message, false, 5000); }
+    UI.aiBusy = false; renderSheet();
+  },
+  gAiApply() {
+    const r = GD.aiResult; if (!r) return;
+    Object.assign(GD.g, { kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat, water: r.water_ml || GD.g.water, caffeine: Math.round(num(r.caffeine_mg)) || GD.g.caffeine || 400 });
+    if (r.training_day?.kcal && r.rest_day?.kcal) {
+      const pick = (o) => ({ kcal: Math.round(num(o.kcal)), protein: Math.round(num(o.protein)), carbs: Math.round(num(o.carbs)), fat: Math.round(num(o.fat)) });
+      GD.g.train = pick(r.training_day); GD.g.rest = pick(r.rest_day);
+    } else if (GD.g.split) Object.assign(GD.g, splitDefaults(GD.g));
+    renderSheet(); toast('AI goals applied — check them and tap Save');
+  },
+  gSave() {
+    if (GD.editDetails) { readProfileForm(); const miss = profileMissing(GD.p); if (miss.length) { toast(`Please fill in: ${miss.join(', ')}`, false, 3500); return; } }
+    const g = GD.g;
+    if (!g.type) { toast('Choose a weight goal first'); return; }
+    if (g.type !== 'maintain') { const t = readBodyWeight('gTgt', GD.p.wUnit); if (t) g.targetKg = t; if (!(g.targetKg >= 30)) { toast('Enter your goal weight'); return; } }
+    if (!num(g.kcal)) { toast('Enter a calorie goal (or tap "Use these")'); return; }
+    for (const k of ['kcal', 'protein', 'carbs', 'fat', 'water', 'caffeine']) g[k] = Math.round(num(g[k]));
+    if (g.split && (!g.train || !g.rest)) Object.assign(g, splitDefaults(g));
+    const prevKg = S.profile?.weightKg;
+    S.profile = { ...GD.p, id: 'profile', weightKg: Math.round(GD.p.weightKg * 100) / 100 };
+    S.goals = { ...g, id: 'goals' };
+    if (!prevKg || Math.abs(prevKg - S.profile.weightKg) > 0.05 || !S.weights.length) logBodyWeight(S.profile.weightKg);
+    save(true); closeSheet(); toast('🎯 Goals saved');
+  },
+  gClear() { if (!confirm('Remove your goals? Your details and weight log are kept.')) return; S.goals = null; save(true); closeSheet(); },
+  logWeight() {
+    openSheet(() => sheetHead('Log body weight') + `<label class="field"><span>Date</span>${dateField({ handler: 'noop', iso: todayKey(), id: 'bwD', max: todayKey() })}</label>
+      <label class="field"><span>Weight (${S.profile?.wUnit || 'kg'})</span>${bodyWeightInputs('bw', S.profile?.weightKg, S.profile?.wUnit || 'kg')}</label>
+      <button class="btn primary block" data-act="saveWeight">Save</button>
+      ${S.weights.length ? `<h3 style="margin-top:16px">History</h3>` + [...S.weights].reverse().slice(0, 30).map(w => `<div class="set-row"><div class="set-main"><b>${fmtBody(w.kg, S.profile?.wUnit || 'kg')}</b> <span class="muted small">· ${fmtDate(dayKey(w.t))}</span></div><button class="icon-btn" data-act="delWeight" data-id="${w.id}">✕</button></div>`).join('') : ''}`);
+  },
+  saveWeight() {
+    const unit = S.profile?.wUnit || 'kg'; const kg = readBodyWeight('bw', unit); const d = $('#bwD').dataset.iso;
+    if (!(kg >= 30 && kg <= 350)) { toast('Enter a valid weight'); return; } if (!d) { toast('Check the date'); return; }
+    logBodyWeight(kg, d); save(true); renderSheet(); toast('Weight logged ✓');
+  },
+  delWeight(el) { S.weights = S.weights.filter(w => w.id !== el.dataset.id); const l = S.weights[S.weights.length - 1]; if (S.profile && l) S.profile.weightKg = l.kg; save(true); renderSheet(); },
+});
+Object.assign(I, {
+  noop() {},
+  gBirth(el) { GD.p.birth = el.value; },
+  gNum() { if (!GD || GD.step !== 2) return; if (GD.editDetails) readProfileForm(); if (GD.g.type && GD.g.type !== 'maintain') { const t = readBodyWeight('gTgt', GD.p.wUnit); if (t) GD.g.targetKg = t; } refreshGoalBits(); },
+  gGoal(el) {
+    const pre = el.dataset.pre, k = el.dataset.f, v = el.value.replace(',', '.');
+    if (pre) { const part = pre.replace('_', ''); GD.g[part] = GD.g[part] || {}; GD.g[part][k] = v; } else GD.g[k] = v;
+    refreshGoalBits();
+  },
+  gSplit(el) { GD.g.split = el.checked; if (el.checked && (!GD.g.train || !GD.g.rest)) Object.assign(GD.g, splitDefaults(GD.g)); renderSheet(); },
+  gAiText(el) { GD.aiText = el.value; },
+});
+['gNum', 'gGoal', 'gAiText'].forEach(n => LIVE.add(n));
+
+// ---- daily summary with goals ----
+function goalBar(val, goal, { limit = false } = {}) {
+  if (!goal) return '';
+  const pct = Math.min(100, (val / goal) * 100); const over = val > goal;
+  return `<div class="gbar ${over ? (limit ? 'bad' : 'over') : ''}"><span style="width:${pct.toFixed(1)}%"></span></div>`;
+}
+function goalButtonHtml() {
+  const g = S.goals;
+  if (!g) return `<button class="btn primary block goal-btn" data-act="openGoals">🎯 Set a goal (optional)</button>`;
+  return `<button class="btn block goal-btn set" data-act="openGoals">🎯 ${num(g.kcal).toLocaleString()} kcal · ${g.protein} g protein <span class="muted">— Edit goals</span></button>`;
+}
+function bodyWeightCard() {
+  if (!S.weights.length && !S.profile) return '';
+  const unit = S.profile?.wUnit || 'kg';
+  const byDay = {}; for (const w of S.weights) byDay[dayKey(w.t)] = w.kg;
+  const pts = Object.keys(byDay).sort().map(k => ({ x: k, y: r1(bodyInUnit(byDay[k], unit)) }));
+  const goal = S.goals && S.goals.type !== 'maintain' && S.goals.targetKg ? r1(bodyInUnit(S.goals.targetKg, unit)) : null;
+  let h = `<div class="card"><div class="spread"><h3 style="margin:0">Body weight</h3><button class="btn xs" data-act="logWeight">+ Log weight</button></div>`;
+  h += pts.length ? `<div class="chart-wrap">${lineChart(pts, false, goal, true)}</div>` : `<p class="muted small">Log your weight to see your progress here.</p>`;
+  if (S.profile?.weightKg) h += `<p class="small" style="margin:4px 0 0">Now <b>${fmtBody(S.profile.weightKg, unit)}</b>${goal ? ` · goal <b>${fmtBody(S.goals.targetKg, unit)}</b> <span class="muted">(dashed line)</span>` : ''}${S.goals ? ` · <span style="color:var(--accent2)">${esc(etaText(S.profile, S.goals))}</span>` : ''}</p>`;
+  return h + `</div>`;
+}
 
 /* ============================== Spotify ============================== */
 // Connects to the user's Spotify account (PKCE, no server) to show and control what's playing.
