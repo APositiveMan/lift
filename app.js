@@ -833,24 +833,81 @@ const vol = (s) => num(s.weight) * num(s.reps);
 const setsOf = (exId) => S.sets.filter(s => s.exerciseId === exId).sort((a, b) => a.t - b.t);
 const activeWorkout = () => S.workouts.find(w => w.id === S.activeWorkoutId) || null;
 
+/* ---- What each exercise tracks: weight, reps and/or time (remembered per exercise) ---- */
+const FIELDS = ['weight', 'reps', 'time'];
+const FIELD_LABEL = { weight: '⚖️ Weight', reps: '🔁 Reps', time: '⏱ Time' };
+const isCardio = (e) => (e?.categoryIds || []).some(id => (catById(id)?.name || '').toLowerCase() === 'cardio');
+// Best default per exercise: t = time (holds, crawls), wt = weight + time (carries, sleds), r = reps (bodyweight), wr = weight + reps.
+// Anything not listed: Cardio → time, everything else → weight + reps. The user's own choice always wins.
+const DEFAULT_TRACK = {"plank": "t", "side plank": "t", "reverse plank": "t", "copenhagen plank": "t", "hollow-body hold": "t", "dead hang": "t", "towel hang": "t", "l-sit": "t", "v-sit": "t", "handstand": "t", "front lever": "t", "back lever": "t", "human flag": "t", "planche": "t", "neck isometric hold": "t", "bear crawl": "t", "crab walk": "t", "mountain climber": "t", "jumping jack": "t", "wall sit": "t", "farmer's carry": "wt", "kettlebell farmer's carry": "wt", "suitcase carry": "wt", "kettlebell suitcase carry": "wt", "farmer's hold": "wt", "plate pinch hold": "wt", "sled pushes": "wt", "sled pulls": "wt", "sled drags": "wt", "backward sled walks": "wt", "weighted carries": "wt", "sandbag carries": "wt", "prowler sprints": "wt", "weighted stair climbs": "wt", "push-up": "r", "incline push-up": "r", "decline push-up": "r", "diamond push-up": "r", "archer push-up": "r", "one-arm push-up": "r", "pike push-up": "r", "handstand push-up": "r", "pull-up": "r", "chin-up": "r", "one-arm pull-up": "r", "scapular pull-up": "r", "muscle-up": "r", "inverted row": "r", "chest dip": "r", "bench dip": "r", "parallel-bar dip": "r", "bodyweight triceps extension": "r", "skin the cat": "r", "rope climb": "r", "pistol squat": "r", "sissy squat": "r", "shrimp squat": "r", "cossack squat": "r", "nordic hamstring curl": "r", "glute-ham raise": "r", "stability-ball leg curl": "r", "sliding leg curl": "r", "glute bridge": "r", "single-leg glute bridge": "r", "frog pump": "r", "donkey kick": "r", "fire hydrant": "r", "clamshell": "r", "banded clamshell": "r", "lateral band walk": "r", "monster walk": "r", "side-lying hip abduction": "r", "hip airplane": "r", "ball squeeze": "r", "back extension": "r", "45-degree hip extension": "r", "crunch": "r", "sit-up": "r", "decline sit-up": "r", "reverse crunch": "r", "v-up": "r", "hanging knee raise": "r", "hanging leg raise": "r", "captain's chair knee raise": "r", "toes-to-bar": "r", "bicycle crunch": "r", "ab wheel rollout": "r", "dead bug": "r", "bird dog": "r", "serratus wall slide": "r", "wall angel": "r", "band external rotation": "r", "band internal rotation": "r", "neck flexion": "r", "neck extension": "r", "neck lateral flexion": "r", "neck rotation": "r", "single-leg calf raise": "r", "toe raises": "r", "ankle inversion": "r", "ankle eversion": "r", "pogo jumps": "r", "hand gripper squeeze": "r", "finger extension": "r", "box jump": "r", "broad jump": "r", "depth jump": "r", "squat jump": "r", "jump lunge": "r", "tuck jump": "r", "skater jump": "r", "burpee": "r", "step-up": "wr", "kettlebell swing": "wr", "medicine-ball slam": "wr", "medicine-ball rotational throw": "wr", "russian twist": "wr"};
+const TRACK_CODES = { t: { weight: false, reps: false, time: true }, wt: { weight: true, reps: false, time: true }, r: { weight: false, reps: true, time: false }, wr: { weight: true, reps: true, time: false } };
+function fieldsOf(e) {
+  if (e?.fields && FIELDS.some(f => e.fields[f])) return e.fields;
+  const code = DEFAULT_TRACK[(e?.name || '').trim().toLowerCase()];
+  if (code) return TRACK_CODES[code];
+  return isCardio(e) ? TRACK_CODES.t : TRACK_CODES.wr;
+}
+const fmtTime = (sec) => { sec = Math.round(num(sec)); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`; };
+const has = (v) => v !== undefined && v !== null && v !== '';
+// "60 kg × 8 · ⏱ 25:30" (html) or plain text
+function setText(s, plain = false) {
+  const b = (x) => plain ? x : `<b>${x}</b>`; const parts = [];
+  const w = has(s.weight), r = has(s.reps), t = num(s.time) > 0;
+  if (w && r) parts.push(`${b(fmtN(num(s.weight)))} ${wu()} × ${b(s.reps)}`);
+  else if (w) parts.push(`${b(fmtN(num(s.weight)))} ${wu()}`);
+  else if (r) parts.push(`${b(s.reps)} reps`);
+  if (t) parts.push(`${plain ? '' : '⏱ '}${b(fmtTime(s.time))}${plain ? ' min' : ''}`);
+  return parts.join(' · ') || '—';
+}
 function prFlags(set) {
   const prior = S.sets.filter(s => s.exerciseId === set.exerciseId && s.id !== set.id && s.t < set.t);
   if (!prior.length) return [];
   const f = [];
-  const w = num(set.weight), r = num(set.reps), v = vol(set);
+  const w = num(set.weight), r = num(set.reps), v = vol(set), t = num(set.time);
   if (w > 0 && w > Math.max(...prior.map(s => num(s.weight)))) f.push('weight');
   if (r > 0 && r > Math.max(...prior.map(s => num(s.reps)))) f.push('reps');
   if (v > 0 && v > Math.max(...prior.map(vol))) f.push('volume');
+  if (t > 0 && t > Math.max(...prior.map(s => num(s.time)))) f.push('time');
   return f;
 }
-const PR_LABEL = { weight: '🏆 Heaviest', reps: '🏆 Most reps', volume: '🏆 Best set' };
+const PR_LABEL = { weight: '🏆 Heaviest', reps: '🏆 Most reps', volume: '🏆 Best set', time: '🏆 Longest' };
 const prBadges = (flags) => flags.map(f => `<span class="pr">${PR_LABEL[f]}</span>`).join('');
 
 function records(exId) {
   const ss = setsOf(exId);
   if (!ss.length) return null;
   const by = (fn) => ss.reduce((best, s) => (fn(s) > fn(best) ? s : best), ss[0]);
-  return { weight: by(s => num(s.weight)), reps: by(s => num(s.reps)), volume: by(vol) };
+  return { weight: by(s => num(s.weight)), reps: by(s => num(s.reps)), volume: by(vol), time: by(s => num(s.time)) };
+}
+// Personal-best cards for the fields this exercise uses (or has data for)
+function prCardsHtml(e, rec, detail = true) {
+  const f = fieldsOf(e); const ss = setsOf(e.id);
+  const hw = f.weight || ss.some(s => num(s.weight) > 0), hr = f.reps || ss.some(s => num(s.reps) > 0), ht = f.time || ss.some(s => num(s.time) > 0);
+  const cards = [];
+  if (hw) cards.push(`<div class="pr-card"><div class="v">${rec && num(rec.weight.weight) ? fmtN(num(rec.weight.weight)) : '—'}</div><div class="l">Heaviest (${wu()})${detail && rec && has(rec.weight.reps) && num(rec.weight.weight) ? `<br>×${rec.weight.reps}` : ''}</div></div>`);
+  if (hr) cards.push(`<div class="pr-card"><div class="v">${rec && num(rec.reps.reps) ? rec.reps.reps : '—'}</div><div class="l">Most reps${detail && rec && num(rec.reps.weight) ? `<br>@ ${fmtN(num(rec.reps.weight))} ${wu()}` : ''}</div></div>`);
+  if (hw && hr) cards.push(`<div class="pr-card"><div class="v">${rec && vol(rec.volume) ? fmtN(vol(rec.volume)) : '—'}</div><div class="l">Best set${detail ? ` (${wu()}×reps)` : ''}${detail && rec && vol(rec.volume) ? `<br>${fmtN(num(rec.volume.weight))}×${rec.volume.reps}` : ''}</div></div>`);
+  if (ht) cards.push(`<div class="pr-card"><div class="v">${rec && num(rec.time.time) ? fmtTime(rec.time.time) : '—'}</div><div class="l">Longest (min:sec)</div></div>`);
+  return `<div class="pr-cards" style="grid-template-columns:repeat(${Math.max(1, cards.length)},1fr)">${cards.join('')}</div>`;
+}
+const fieldToggles = (e) => `<div class="field-toggles"><span class="tiny muted">Track:</span>${FIELDS.map(f => `<button class="chip ${fieldsOf(e)[f] ? 'on' : ''}" data-act="toggleField" data-id="${e.id}" data-f="${f}">${FIELD_LABEL[f]}</button>`).join('')}</div>`;
+// Inputs for logging a set; prefix makes ids unique (e.g. 'ns' in the exercise screen, 'q_<id>' in a workout card)
+function setInputsHtml(e, pre, prefill = {}) {
+  const f = fieldsOf(e); let h = '';
+  const tm = num(prefill.time) > 0 ? Math.floor(num(prefill.time) / 60) : '', ts = num(prefill.time) > 0 ? Math.round(num(prefill.time) % 60) : '';
+  if (f.weight) h += `<label class="field"><span>Weight (${wu()})</span><input type="text" inputmode="decimal" id="${pre}W" value="${has(prefill.weight) ? esc(prefill.weight) : ''}" placeholder="0"></label>`;
+  if (f.reps) h += `<label class="field"><span>Reps</span><input type="text" inputmode="numeric" id="${pre}R" value="${has(prefill.reps) ? esc(prefill.reps) : ''}"></label>`;
+  if (f.time) h += `<label class="field"><span>Time (min : sec)</span><div class="tpair"><input type="text" inputmode="numeric" id="${pre}Tm" placeholder="min" value="${tm}"><b>:</b><input type="text" inputmode="numeric" id="${pre}Ts" placeholder="sec" value="${ts}"></div></label>`;
+  const n = FIELDS.filter(k => f[k]).length;
+  return `<div class="set-inputs" style="grid-template-columns:repeat(${n},minmax(0,1fr))">${h}</div>`;
+}
+// Read + check the inputs. Returns {weight, reps, time} (null = not tracked) or null if something's missing.
+function readSetInputs(e, pre) {
+  const f = fieldsOf(e); const v = { weight: null, reps: null, time: null };
+  if (f.weight) v.weight = num($('#' + pre + 'W')?.value);
+  if (f.reps) { v.reps = Math.round(num($('#' + pre + 'R')?.value)); if (!v.reps) { toast('Enter reps'); return null; } }
+  if (f.time) { v.time = Math.round(num($('#' + pre + 'Tm')?.value) * 60 + num($('#' + pre + 'Ts')?.value)); if (!v.time) { toast('Enter the time'); return null; } }
+  return v;
 }
 
 /* ============================== Toast & sheet ============================== */
@@ -1000,7 +1057,7 @@ function exerciseListHtml() {
     return `<div class="list-item" data-act="openExercise" data-id="${e.id}"><div class="li-main">
       <div class="li-title ellipsis">${esc(e.name)}</div>
       <div class="li-sub">${cats.map(c => `<span class="tag">${esc(c)}</span>`).join('') || '<span class="tag">No group</span>'}
-      ${rec ? ` · PR ${fmtN(num(rec.weight.weight))} ${wu()}` : ''}</div></div><span class="chev">›</span></div>`;
+      ${rec ? (num(rec.weight.weight) ? ` · PR ${fmtN(num(rec.weight.weight))} ${wu()}` : num(rec.time.time) ? ` · PR ${fmtTime(rec.time.time)}` : num(rec.reps.reps) ? ` · PR ${rec.reps.reps} reps` : '') : ''}</div></div><span class="chev">›</span></div>`;
   }).join('') + (more > 0 ? `<button class="btn ghost block" data-act="moreExercises">Show more (${Math.min(30, more)} of ${more} left)</button>` : '')
     + `<div class="tiny muted" style="text-align:center;margin-top:6px">Showing ${list.length} of ${all.length}</div>`;
 }
@@ -1012,20 +1069,17 @@ function workoutExIds(w) {
 function workoutExerciseCard(e, w) {
   const today = S.sets.filter(s => s.exerciseId === e.id && s.workoutId === w.id).sort((a, b) => a.t - b.t);
   const last = lastSessionBefore(e.id, w.start);
-  const lastTxt = last ? last.sets.map(s => `${fmtN(num(s.weight))}×${s.reps}`).join(', ') : 'first time';
+  const lastTxt = last ? last.sets.map(s => setText(s, true)).join(', ') : 'first time';
   const prefill = today[today.length - 1] || (last && last.sets[last.sets.length - 1]) || {};
   let h = `<div class="card"><div class="spread"><h3 style="margin:0" data-act="openExercise" data-id="${e.id}">${esc(e.name)} <span class="chev">›</span></h3>
     <button class="btn xs ghost" data-act="removeWorkoutEx" data-id="${e.id}">✕ Remove</button></div>
     <div class="tiny muted" style="margin:2px 0 6px">Last time: ${esc(lastTxt)}</div>`;
   today.forEach((s, i) => {
-    h += `<div class="set-row"><div class="set-num">${i + 1}</div><div class="set-main"><b>${fmtN(num(s.weight))}</b> ${wu()} × <b>${s.reps}</b>
+    h += `<div class="set-row"><div class="set-num">${i + 1}</div><div class="set-main">${setText(s)}
       ${s.notes ? `<div class="tiny muted">${esc(s.notes)}</div>` : ''}<div>${prBadges(prFlags(s))}</div></div>
       <button class="icon-btn" data-act="editSet" data-id="${s.id}">✎</button></div>`;
   });
-  h += `<div class="quick-set">
-    <input type="text" inputmode="decimal" placeholder="${wu()}" id="qw_${e.id}" value="${prefill.weight !== undefined ? esc(prefill.weight) : ''}">
-    <input type="text" inputmode="numeric" placeholder="reps" id="qr_${e.id}" value="${prefill.reps !== undefined ? esc(prefill.reps) : ''}">
-    <button class="btn primary sm" data-act="quickAddSet" data-id="${e.id}">+ Set</button></div></div>`;
+  h += fieldToggles(e) + setInputsHtml(e, 'q_' + e.id, prefill) + `<button class="btn primary block sm" data-act="quickAddSet" data-id="${e.id}">+ Log set</button></div>`;
   return h;
 }
 
@@ -1036,9 +1090,12 @@ function lastSessionBefore(exId, beforeT) {
   return { day: lastDay, sets: prior.filter(s => dayKey(s.t) === lastDay) };
 }
 
-function addSet(exId, weight, reps, notes = '', t = Date.now()) {
+function addSet(exId, weight, reps, notes = '', t = Date.now(), time = null) {
   const w = dayKey(t) === todayKey() ? activeWorkout() : null; // back-dated sets never join today's workout
-  const s = { id: uid(), exerciseId: exId, t, weight: num(weight), reps: Math.round(num(reps)), notes, workoutId: w ? w.id : null };
+  const s = { id: uid(), exerciseId: exId, t, notes, workoutId: w ? w.id : null };
+  if (weight !== null && weight !== undefined) s.weight = num(weight);
+  if (reps !== null && reps !== undefined) s.reps = Math.round(num(reps));
+  if (time) s.time = Math.round(num(time));
   S.sets.push(s);
   if (w && !workoutExIds(w).includes(exId)) w.exerciseIds.push(exId);
   save();
@@ -1059,15 +1116,10 @@ function exerciseSheet(exId) {
       S.categories.map(c => `<button class="chip ${e.categoryIds.includes(c.id) ? 'on' : ''}" data-act="toggleExCat" data-id="${e.id}" data-cat="${c.id}">${esc(c.name)}</button>`).join('') + `</div>`;
     h += `<label class="field"><span>Notes</span><textarea data-in="exNotes" data-id="${e.id}" placeholder="Setup, seat height, cues…">${esc(e.notes)}</textarea></label>`;
 
-    h += `<h3>Personal bests</h3><div class="pr-cards">
-      <div class="pr-card"><div class="v">${rec ? fmtN(num(rec.weight.weight)) : '—'}</div><div class="l">Heaviest (${wu()})${rec ? `<br>×${rec.weight.reps}` : ''}</div></div>
-      <div class="pr-card"><div class="v">${rec ? rec.reps.reps : '—'}</div><div class="l">Most reps${rec ? `<br>@ ${fmtN(num(rec.reps.weight))} ${wu()}` : ''}</div></div>
-      <div class="pr-card"><div class="v">${rec ? fmtN(vol(rec.volume)) : '—'}</div><div class="l">Best set (${wu()}×reps)${rec ? `<br>${fmtN(num(rec.volume.weight))}×${rec.volume.reps}` : ''}</div></div></div>`;
+    h += `<h3>Personal bests</h3>${prCardsHtml(e, rec)}`;
 
     const last = setsOf(e.id).slice(-1)[0] || {};
-    h += `<div class="card" style="background:var(--card2)"><h3>Add set</h3>
-      <div class="grid2"><label class="field"><span>Weight (${wu()})</span><input type="text" inputmode="decimal" id="nsW" value="${last.weight ?? ''}"></label>
-      <label class="field"><span>Reps</span><input type="text" inputmode="numeric" id="nsR" value="${last.reps ?? ''}"></label></div>
+    h += `<div class="card" style="background:var(--card2)"><h3>Add set</h3>${fieldToggles(e)}${setInputsHtml(e, 'ns', last)}
       <div class="grid2"><label class="field"><span>Date</span>${dateField({ handler: 'logDate', iso: UI.logDate || todayKey(), id: 'nsD', max: todayKey() })}</label>
       <label class="field"><span>Notes</span><input type="text" id="nsN" placeholder="optional"></label></div>
       <p class="tiny" id="logNote" style="color:var(--accent2);margin:-4px 0 8px">${logNoteText()}</p>${dateHint()}
@@ -1083,8 +1135,8 @@ function exerciseSheet(exId) {
       for (const s of ss) {
         const k = dayKey(s.t);
         if (k !== cur) { h += `<div class="date-head">${fmtDay(k)}</div>`; cur = k; }
-        h += `<div class="set-row"><div class="set-main"><b>${fmtN(num(s.weight))}</b> ${wu()} × <b>${s.reps}</b>
-          <span class="muted small"> = ${fmtN(vol(s))}</span>${s.notes ? `<div class="tiny muted">${esc(s.notes)}</div>` : ''}
+        h += `<div class="set-row"><div class="set-main">${setText(s)}
+          ${vol(s) ? `<span class="muted small"> = ${fmtN(vol(s))}</span>` : ''}${s.notes ? `<div class="tiny muted">${esc(s.notes)}</div>` : ''}
           <div>${prBadges(prFlags(s))}</div></div><button class="icon-btn" data-act="editSet" data-id="${s.id}">✎</button></div>`;
       }
     }
@@ -1097,9 +1149,13 @@ function setSheet(setId) {
   return () => {
     const s = S.sets.find(x => x.id === setId); if (!s) return sheetHead('Set') + '<p>Deleted.</p>';
     const e = exById(s.exerciseId);
+    const f = fieldsOf(e); const show = { weight: f.weight || has(s.weight), reps: f.reps || has(s.reps), time: f.time || num(s.time) > 0 };
+    let ins = '';
+    if (show.weight) ins += `<label class="field"><span>Weight (${wu()})</span><input type="text" inputmode="decimal" value="${has(s.weight) ? esc(s.weight) : ''}" data-in="setWeight" data-id="${s.id}"></label>`;
+    if (show.reps) ins += `<label class="field"><span>Reps</span><input type="text" inputmode="numeric" value="${has(s.reps) ? esc(s.reps) : ''}" data-in="setReps" data-id="${s.id}"></label>`;
+    if (show.time) ins += `<label class="field"><span>Time (min : sec)</span><div class="tpair"><input type="text" inputmode="numeric" id="esTm" value="${num(s.time) ? Math.floor(s.time / 60) : ''}" placeholder="min" data-in="setTime" data-id="${s.id}"><b>:</b><input type="text" inputmode="numeric" id="esTs" value="${num(s.time) ? s.time % 60 : ''}" placeholder="sec" data-in="setTime" data-id="${s.id}"></div></label>`;
     return sheetHead('Edit set') + `<p class="muted" style="margin-top:-6px">${esc(e?.name || '')}</p>
-      <div class="grid2"><label class="field"><span>Weight (${wu()})</span><input type="text" inputmode="decimal" value="${esc(s.weight)}" data-in="setWeight" data-id="${s.id}"></label>
-      <label class="field"><span>Reps</span><input type="text" inputmode="numeric" value="${esc(s.reps)}" data-in="setReps" data-id="${s.id}"></label></div>
+      <div class="set-inputs" style="grid-template-columns:repeat(${Object.values(show).filter(Boolean).length},minmax(0,1fr))">${ins}</div>
       <label class="field"><span>Date</span>${dateField({ handler: 'setDate', iso: dayKey(s.t), dataId: s.id, max: todayKey() })}</label>${dateHint()}
       <label class="field"><span>Notes</span><textarea data-in="setNotes" data-id="${s.id}">${esc(s.notes)}</textarea></label>
       <button class="btn danger block" data-act="deleteSet" data-id="${s.id}">Delete set</button>`;
@@ -1183,7 +1239,7 @@ function startWorkoutSheet() {
 function computeSummary(w) {
   const wsets = S.sets.filter(s => s.workoutId === w.id).sort((a, b) => a.t - b.t);
   const exIds = [...new Set(wsets.map(s => s.exerciseId))];
-  const tot = (arr) => ({ sets: arr.length, reps: arr.reduce((a, s) => a + num(s.reps), 0), volume: arr.reduce((a, s) => a + vol(s), 0) });
+  const tot = (arr) => ({ sets: arr.length, reps: arr.reduce((a, s) => a + num(s.reps), 0), volume: arr.reduce((a, s) => a + vol(s), 0), time: arr.reduce((a, s) => a + num(s.time), 0) });
   const totals = tot(wsets);
   const duration = (w.end || Date.now()) - w.start;
 
@@ -1194,7 +1250,7 @@ function computeSummary(w) {
 
   const good = [], bad = [], missed = [], perEx = [];
   const prs = [];
-  for (const s of wsets) { const f = prFlags(s); if (f.length) prs.push({ ex: exById(s.exerciseId)?.name, set: `${fmtN(num(s.weight))}${wu()}×${s.reps}`, flags: f }); }
+  for (const s of wsets) { const f = prFlags(s); if (f.length) prs.push({ ex: exById(s.exerciseId)?.name, set: setText(s, true), flags: f }); }
   if (prs.length) good.push(...prs.map(p => `New PR on ${p.ex}: ${p.set} (${p.flags.map(f => PR_LABEL[f].replace('🏆 ', '').toLowerCase()).join(', ')})`));
 
   for (const exId of exIds) {
@@ -1203,13 +1259,20 @@ function computeSummary(w) {
     const last = lastSessionBefore(exId, w.start);
     const tBest = Math.max(...today.map(s => num(s.weight)));
     const tVol = today.reduce((a, s) => a + vol(s), 0);
-    const row = { name: e.name, sets: today.length, best: tBest, volume: tVol, lastBest: null, lastVolume: null, lastSets: null };
+    const tTime = today.reduce((a, s) => a + num(s.time), 0), tReps = today.reduce((a, s) => a + num(s.reps), 0);
+    // what to compare: volume (weight × reps), else time, else reps
+    const kind = tVol > 0 ? 'volume' : tTime > 0 ? 'time' : 'reps';
+    const row = { name: e.name, sets: today.length, best: tBest, volume: tVol, time: tTime, reps: tReps, kind, lastBest: null, lastVolume: null, lastSets: null, lastScore: null };
+    row.score = kind === 'volume' ? tVol : kind === 'time' ? tTime : tReps;
+    const fmtScore = (v) => kind === 'volume' ? `${fmtN(v)} ${wu()}` : kind === 'time' ? `${fmtTime(v)} min` : `${v} reps`;
     if (last) {
       row.lastBest = Math.max(...last.sets.map(s => num(s.weight)));
       row.lastVolume = last.sets.reduce((a, s) => a + vol(s), 0);
+      row.lastScore = kind === 'volume' ? row.lastVolume : kind === 'time' ? last.sets.reduce((a, s) => a + num(s.time), 0) : last.sets.reduce((a, s) => a + num(s.reps), 0);
       row.lastSets = last.sets.length;
-      if (tVol > row.lastVolume || tBest > row.lastBest) good.push(`${e.name}: improved vs last time (${fmtN(row.lastVolume)} → ${fmtN(tVol)} total ${wu()})`);
-      else if (tVol < row.lastVolume && tBest <= row.lastBest) bad.push(`${e.name}: less volume than last time (${fmtN(row.lastVolume)} → ${fmtN(tVol)} ${wu()})`);
+      const label = kind === 'volume' ? 'total' : kind === 'time' ? 'total time' : 'total reps';
+      if (row.score > row.lastScore || (kind === 'volume' && tBest > row.lastBest)) good.push(`${e.name}: improved vs last time (${fmtScore(row.lastScore)} → ${fmtScore(row.score)} ${label})`);
+      else if (row.score < row.lastScore && (kind !== 'volume' || tBest <= row.lastBest)) bad.push(`${e.name}: less than last time (${fmtScore(row.lastScore)} → ${fmtScore(row.score)} ${label})`);
       if (today.length < last.sets.length) bad.push(`${e.name}: ${today.length} set${today.length === 1 ? '' : 's'} vs ${last.sets.length} last time`);
     } else {
       good.push(`${e.name}: first time logged — baseline set`);
@@ -1250,15 +1313,16 @@ function summarySheet(wId, back = false) {
       <div class="stat"><div class="l">Duration</div><div class="v">${fmtDur(s.duration)}</div><div class="tiny">${s.prev ? deltaHtml(Math.round(s.duration / 60000), Math.round(s.prev.duration / 60000), ' min') : ''}</div></div>
       <div class="stat"><div class="l">Sets</div><div class="v">${s.totals.sets}</div><div class="tiny">${p ? deltaHtml(s.totals.sets, p.sets) : ''}</div></div>
       <div class="stat"><div class="l">Reps</div><div class="v">${s.totals.reps}</div><div class="tiny">${p ? deltaHtml(s.totals.reps, p.reps) : ''}</div></div>
-      <div class="stat"><div class="l">Volume (${wu()})</div><div class="v">${fmtN(s.totals.volume)}</div><div class="tiny">${p ? deltaHtml(s.totals.volume, p.volume) : ''}</div></div></div>`;
+      <div class="stat"><div class="l">Volume (${wu()})</div><div class="v">${fmtN(s.totals.volume)}</div><div class="tiny">${p ? deltaHtml(s.totals.volume, p.volume) : ''}</div></div>
+      ${s.totals.time || p?.time ? `<div class="stat"><div class="l">Exercise time</div><div class="v">${fmtTime(s.totals.time)}</div><div class="tiny">${p ? deltaHtml(Math.round(s.totals.time / 60), Math.round(p.time / 60), ' min') : ''}</div></div>` : ''}</div>`;
     h += `<p class="small muted" style="margin-top:-6px">${s.prev ? `Compared with your last ${esc(s.prev.cats)} workout on ${fmtDay(s.prev.day)}.` : 'No earlier workout for these muscle groups to compare with yet.'}</p>`;
     h += `<div class="sum-block"><h3>✅ What went well</h3>${li(s.good, 'Nothing stood out — log more sets to get feedback.')}</div>`;
     h += `<div class="sum-block"><h3>⚠️ What could be better</h3>${li(s.bad, 'Nothing went backwards. 💪')}</div>`;
     h += `<div class="sum-block"><h3>❓ Missed</h3>${li(s.missed, 'You didn’t skip anything.')}</div>`;
     if (s.perEx.length) {
       h += `<div class="sum-block"><h3>Per exercise</h3>` + s.perEx.map(r => `<div class="set-row"><div class="set-main"><b>${esc(r.name)}</b>
-        <div class="tiny muted">${r.sets} sets · top ${fmtN(r.best)} ${wu()} · vol ${fmtN(r.volume)}</div></div>
-        <div class="tiny" style="text-align:right">${r.lastVolume !== null ? deltaHtml(r.volume, r.lastVolume) : '<span class="muted">new</span>'}</div></div>`).join('') + `</div>`;
+        <div class="tiny muted">${r.sets} set${r.sets === 1 ? '' : 's'}${r.kind === 'volume' ? ` · top ${fmtN(r.best)} ${wu()} · vol ${fmtN(r.volume)}` : r.kind === 'time' ? ` · ${fmtTime(r.time)} min` : ` · ${r.reps} reps`}</div></div>
+        <div class="tiny" style="text-align:right">${r.lastScore !== null ? deltaHtml(r.kind === 'time' ? Math.round(r.score / 60) : r.score, r.kind === 'time' ? Math.round(r.lastScore / 60) : r.lastScore, r.kind === 'time' ? ' min' : '') : '<span class="muted">new</span>'}</div></div>`).join('') + `</div>`;
     }
     h += `<div class="card" style="background:var(--card2)"><h3>🤖 AI coach review</h3>`;
     if (w.aiReview) h += `<div class="small">${md(w.aiReview)}</div>`;
@@ -1274,11 +1338,39 @@ const METRICS = {
   reps: { label: 'Max reps', info: () => `The most reps you did in one set each day, at any weight.`, fn: (ss) => Math.max(...ss.map(s => num(s.reps))), unit: () => 'reps' },
   set: { label: 'Best set', info: () => `Your strongest single set each day, scored as weight × reps.`, fn: (ss) => Math.max(...ss.map(vol)), unit: () => `${wu()}×reps` },
   volume: { label: 'Total volume', info: () => `All the work you did for this exercise each day: weight × reps for every set, added together.`, fn: (ss) => ss.reduce((a, s) => a + vol(s), 0), unit: () => wu() },
+  time: { label: 'Longest time', info: () => `Your longest single set or session each day, in minutes.`, fn: (ss) => Math.max(...ss.map(s => num(s.time))) / 60, unit: () => 'minutes', needs: 'time' },
+  ttime: { label: 'Total time', info: () => `All the time you spent on this exercise each day: every set or session added together, in minutes.`, fn: (ss) => ss.reduce((a, s) => a + num(s.time), 0) / 60, unit: () => 'minutes', needs: 'time' },
 };
+METRICS.weight.needs = 'weight'; METRICS.reps.needs = 'reps'; METRICS.set.needs = 'wr'; METRICS.volume.needs = 'wr';
+// Which chart options make sense for this exercise's logged sets
+function metricsFor(exId) {
+  const ss = setsOf(exId); const w = ss.some(s => num(s.weight) > 0), r = ss.some(s => num(s.reps) > 0), t = ss.some(s => num(s.time) > 0);
+  return Object.keys(METRICS).filter(k => ({ weight: w, reps: r, wr: w && r, time: t })[METRICS[k].needs]);
+}
 
 /* ---- "Show example" for the Progress options: one simple bench-press day, worked through step by step ---- */
 const EX_SETS = [[60, 10], [70, 6], [75, 3]]; // weight, reps
+function timeExampleSheet(k) {
+  const m = METRICS[k]; const runs = [[10, 0], [15, 30], [5, 0]];
+  const secs = runs.map(([a, b]) => a * 60 + b); const total = secs.reduce((a, b) => a + b, 0);
+  const longest = k === 'time';
+  let h = sheetHead(`${m.label} — example`);
+  h += `<p class="muted" style="margin-top:-6px">Say you did <b style="color:var(--text)">Treadmill walking</b> on Monday in 3 goes:</p>
+    <table class="ex-table"><thead><tr><th></th><th>Time (min:sec)</th></tr></thead><tbody>${runs.map(([a, b], i) => `<tr class="${!longest || i === 1 ? 'hit' : ''}"><td>Set ${i + 1}</td><td class="${longest && i === 1 ? 'em' : ''}">${a}:${pad(b)}</td></tr>`).join('')}</tbody></table>`;
+  const steps = longest
+    ? [`Look at the <b>time</b> of each go.`, `Find the longest one: 10:00, <b>15:30</b> or 5:00.`, `Set 2 wins — that's your longest session of the day.`]
+    : [`Take the <b>time</b> of every go: 10:00, 15:30 and 5:00.`, `Add them together: 10:00 + 15:30 + 5:00 = <b>${fmtTime(total)}</b>.`, `Every go counts — an extra round makes the number bigger.`];
+  h += `<h3 style="margin:16px 0 6px">How Lift works it out</h3><ol class="ex-steps">${steps.map(x => `<li>${x}</li>`).join('')}</ol>`;
+  h += `<div class="ex-result"><span>Monday's ${m.label.toLowerCase()}</span><b>${longest ? '15:30' : fmtTime(total)} min</b></div>`;
+  const trend = longest ? [['Week 1', '15:30'], ['Week 2', '18:00'], ['Week 3', '20:00']] : [['Week 1', '30:30'], ['Week 2', '34:00'], ['Week 3', '40:00']];
+  h += `<h3 style="margin:16px 0 6px">What the chart shows</h3>
+    <p class="small" style="margin:0 0 8px">That result becomes <b>one dot</b> for Monday (shown in minutes, so 15:30 is 15.5). More dots over the weeks — a line going <b>up</b> means you're lasting longer:</p>
+    <div class="ex-trend">${trend.map(([l, v], i) => `<div><span>${l}</span><b>${v}</b>${i ? `<i class="up">▲</i>` : ''}</div>`).join('')}</div>`;
+  h += `<div class="notice" style="margin-top:14px">💡 ${longest ? 'Great for <b>endurance</b>: can you keep going longer in one go?' : 'Shows your <b>total training time</b> on this exercise — useful for cardio like treadmill, bike or rowing.'}</div>`;
+  return h + `<button class="btn primary block" data-act="closeSheet">Got it</button>`;
+}
 function metricExampleSheet(k) {
+  if (k === 'time' || k === 'ttime') return () => timeExampleSheet(k);
   return () => {
     const u = wu(); const m = METRICS[k];
     const vols = EX_SETS.map(([w, r]) => w * r); const total = vols.reduce((a, b) => a + b, 0);
@@ -1329,6 +1421,8 @@ function viewProgress() {
   if (!withSets.length) return `<div class="empty"><div class="big">📈</div>Log some sets and your progress graphs will appear here.</div>`;
   if (!UI.progressEx || !withSets.find(e => e.id === UI.progressEx)) UI.progressEx = withSets[0].id;
   const e = exById(UI.progressEx);
+  const avail = metricsFor(e.id);
+  if (!avail.includes(UI.progressMetric)) UI.progressMetric = avail[0] || 'reps';
   const m = METRICS[UI.progressMetric];
   const days = {};
   for (const s of setsOf(e.id)) (days[dayKey(s.t)] ||= []).push(s);
@@ -1336,14 +1430,11 @@ function viewProgress() {
   const rec = records(e.id);
 
   let h = `<select data-in="progressEx" style="margin-bottom:10px">${withSets.map(x => `<option value="${x.id}" ${x.id === e.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
-  h += `<div class="seg">${Object.entries(METRICS).map(([k, v]) => `<button class="${k === UI.progressMetric ? 'on' : ''}" data-act="metric" data-id="${k}">${v.label}</button>`).join('')}</div>`;
+  h += `<div class="seg">${avail.map(k => [k, METRICS[k]]).map(([k, v]) => `<button class="${k === UI.progressMetric ? 'on' : ''}" data-act="metric" data-id="${k}">${v.label}</button>`).join('')}</div>`;
   h += `<p class="metric-info">ⓘ ${METRICS[UI.progressMetric].info()} <a href="#" class="link" data-act="metricExample" data-id="${UI.progressMetric}">Show example</a></p>`;
   h += `<div class="card"><div class="spread"><h3 style="margin:0">${esc(m.label)}</h3><span class="muted small">${esc(m.unit())}</span></div>
     <div class="chart-wrap">${lineChart(pts)}</div></div>`;
-  h += `<div class="pr-cards">
-    <div class="pr-card"><div class="v">${fmtN(num(rec.weight.weight))}</div><div class="l">Heaviest ${wu()}</div></div>
-    <div class="pr-card"><div class="v">${rec.reps.reps}</div><div class="l">Most reps</div></div>
-    <div class="pr-card"><div class="v">${fmtN(vol(rec.volume))}</div><div class="l">Best set</div></div></div>`;
+  h += prCardsHtml(e, rec, false);
 
   // Weekly volume overall
   const weeks = {};
@@ -1380,7 +1471,8 @@ function lineChart(pts, bars = false) {
   const labelIdx = [...new Set([0, Math.floor((pts.length - 1) / 2), pts.length - 1])];
   for (const i of labelIdx) {
     const d = keyToDate(pts[i].x);
-    g += `<text x="${x(i)}" y="${H - 8}" fill="#8b92a1" font-size="10" text-anchor="middle">${fmtDate(pts[i].x, true)}</text>`;
+    const anchor = pts.length === 1 ? 'middle' : i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle';
+    g += `<text x="${x(i)}" y="${H - 8}" fill="#8b92a1" font-size="10" text-anchor="${anchor}">${fmtDate(pts[i].x, true)}</text>`;
   }
   if (bars) {
     const bw = Math.max(4, Math.min(22, (W - L - R) / pts.length - 6));
@@ -1826,13 +1918,13 @@ const A = {
     const w = S.workouts.find(x => x.id === el.dataset.id); if (!w) return;
     if (!hasAI()) { toast('Add your AI key in Settings first'); return; }
     const s = computeSummary(w);
-    const sets = S.sets.filter(x => x.workoutId === w.id).map(x => `${exById(x.exerciseId)?.name}: ${x.weight}${wu()} x ${x.reps}${x.notes ? ` (${x.notes})` : ''}`);
-    const prevSets = s.prev ? S.sets.filter(x => x.workoutId === s.prev.id).map(x => `${exById(x.exerciseId)?.name}: ${x.weight}${wu()} x ${x.reps}`) : [];
+    const sets = S.sets.filter(x => x.workoutId === w.id).map(x => `${exById(x.exerciseId)?.name}: ${setText(x, true)}${x.notes ? ` (${x.notes})` : ''}`);
+    const prevSets = s.prev ? S.sets.filter(x => x.workoutId === s.prev.id).map(x => `${exById(x.exerciseId)?.name}: ${setText(x, true)}`) : [];
     const prompt = `Review my workout. Muscle groups: ${catNames(w.categoryIds)}. Duration: ${fmtDur(s.duration)}.
 Today's sets:\n${sets.join('\n') || '(none)'}
 ${s.prev ? `Last ${s.prev.cats} workout (${s.prev.day}, ${fmtDur(s.prev.duration)}):\n${prevSets.join('\n')}` : 'No previous workout for these groups.'}
 App analysis — went well: ${s.good.join('; ') || 'n/a'}. Worse: ${s.bad.join('; ') || 'n/a'}. Missed: ${s.missed.join('; ') || 'n/a'}.
-Give short, direct feedback in Markdown with sections: **Verdict** (1–2 sentences), **Did well**, **Improve**, **Missed / balance**, **vs last time**, **Next session target** (concrete weights/reps). Max ~200 words. Do not include a YOUTUBE_QUERY line.`;
+Give short, direct feedback in Markdown with sections: **Verdict** (1–2 sentences), **Did well**, **Improve**, **Missed / balance**, **vs last time**, **Next session target** (concrete weights/reps/times). Max ~200 words. Do not include a YOUTUBE_QUERY line.`;
     UI.aiBusy = true; renderSheet();
     try { w.aiReview = await aiCall({ system: 'You are a concise, honest strength coach.', messages: [{ role: 'user', content: prompt }] }); save(); }
     catch (e) { toast('⚠️ ' + e.message, false, 5000); }
@@ -1868,18 +1960,22 @@ Give short, direct feedback in Markdown with sections: **Verdict** (1–2 senten
     S.exercises = S.exercises.filter(x => x.id !== e.id); S.sets = S.sets.filter(s => s.exerciseId !== e.id); save(); closeSheet();
   },
   quickAddSet(el) {
-    const id = el.dataset.id; const w = $('#qw_' + id).value, r = $('#qr_' + id).value;
-    if (!num(r)) { toast('Enter reps'); return; }
-    addSet(id, w, r); render();
+    const id = el.dataset.id; const v = readSetInputs(exById(id), 'q_' + id); if (!v) return;
+    addSet(id, v.weight, v.reps, '', Date.now(), v.time); render();
+  },
+  toggleField(el) {
+    const e = exById(el.dataset.id); const f = { ...fieldsOf(e) }; f[el.dataset.f] = !f[el.dataset.f];
+    if (!FIELDS.some(k => f[k])) { toast('Keep at least one of weight, reps or time'); return; }
+    e.fields = f; save(); if (sheetRender) renderSheet(); else render();
   },
   sheetAddSet(el) {
-    const w = $('#nsW').value, r = $('#nsR').value, n = $('#nsN').value.trim(), d = $('#nsD').dataset.iso;
-    if (!num(r)) { toast('Enter reps'); return; }
+    const v = readSetInputs(exById(el.dataset.id), 'ns'); if (!v) return;
+    const n = $('#nsN').value.trim(), d = $('#nsD').dataset.iso;
     if (!d) { toast(`Check the date (${dfmtName()})`); return; }
     if (d && d > todayKey()) { toast("You can't log a set in the future"); return; }
     let t = Date.now();
     if (d && d !== todayKey()) { const x = keyToDate(d), now = new Date(); x.setHours(now.getHours(), now.getMinutes(), now.getSeconds()); t = x.getTime(); }
-    addSet(el.dataset.id, w, r, n, t); renderSheet();
+    addSet(el.dataset.id, v.weight, v.reps, n, t, v.time); renderSheet();
   },
   editSet(el) { openSheet(setSheet(el.dataset.id)); },
   deleteSet(el) {
@@ -2012,6 +2108,7 @@ const I = {
   },
   setWeight(el) { S.sets.find(s => s.id === el.dataset.id).weight = num(el.value); save(); },
   setReps(el) { S.sets.find(s => s.id === el.dataset.id).reps = Math.round(num(el.value)); save(); },
+  setTime(el) { const s = S.sets.find(x => x.id === el.dataset.id); const t = Math.round(num($('#esTm')?.value) * 60 + num($('#esTs')?.value)); if (t) s.time = t; else delete s.time; save(); },
   setNotes(el) { S.sets.find(s => s.id === el.dataset.id).notes = el.value; save(); },
   setDate(el) {
     if (!validDay(el.value) || el.value > todayKey()) return; const s = S.sets.find(x => x.id === el.dataset.id);
@@ -2078,7 +2175,7 @@ const I = {
   },
 };
 // Text inputs update live; selects/checkboxes/files/range fire on change.
-const LIVE = new Set(['dateText', 'pickSearch', 'trainSearch', 'exName', 'exNotes', 'catName', 'setWeight', 'setReps', 'setNotes', 'mealName', 'prod', 'gi', 'setKey', 'setModel']);
+const LIVE = new Set(['setTime', 'dateText', 'pickSearch', 'trainSearch', 'exName', 'exNotes', 'catName', 'setWeight', 'setReps', 'setNotes', 'mealName', 'prod', 'gi', 'setKey', 'setModel']);
 document.addEventListener('input', (e) => {
   const el = e.target.closest('[data-in]'); if (!el) return;
   const n = el.dataset.in;
@@ -2093,7 +2190,7 @@ document.addEventListener('change', (e) => {
   if (n === 'setGist') { I.setGist(el); return; }
   if (n === 'setKey') { render(); return; }
   // Re-render sheet after edits that affect PR badges etc.
-  if (['setWeight', 'setReps'].includes(n)) render();
+  if (['setWeight', 'setReps', 'setTime'].includes(n)) render();
 });
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]'); if (!el) return;

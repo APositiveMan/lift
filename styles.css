@@ -324,3 +324,13 @@ a.link { color: var(--blue); text-decoration: underline; text-underline-offset: 
 .ex-trend .up { position: absolute; top: 6px; right: 8px; font-style: normal; font-size: 10px; color: var(--good); }
 
 .drinks-bar { grid-template-columns: repeat(3, 1fr); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+/* Weight / reps / time logging */
+.field-toggles { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.field-toggles .chip { padding: 5px 11px; font-size: 13px; }
+.set-inputs { display: grid; gap: 8px; }
+.set-inputs .field { margin-bottom: 8px; }
+.tpair { display: flex; align-items: center; gap: 4px; }
+.tpair input { text-align: center; min-width: 0; }
+.tpair b { color: var(--muted); }
+.seg { flex-wrap: wrap; }
